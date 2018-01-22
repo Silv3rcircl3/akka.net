@@ -33,7 +33,7 @@ namespace Akka.TestKit
         /// <returns>TBD</returns>
         public T ExpectMsg<T>(TimeSpan? duration = null, string hint = null)
         {
-            return InternalExpectMsg<T>(RemainingOrDilated(duration), (Action<T>)null, hint);
+            return InternalExpectMsg(RemainingOrDilated(duration), (Action<T>)null, hint);
         }
 
         /// <summary>

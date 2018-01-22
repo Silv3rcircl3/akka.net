@@ -201,6 +201,19 @@ namespace Akka.Streams.TestKit.Tests
         }
 
         [Fact]
+        public void TestSink_Probe_ExpectNext_with_timeout_should_fail_after_timeout_when_element_delayed()
+        {
+            Record.Exception(() =>
+            {
+                var timeout = TimeSpan.FromMilliseconds(100);
+                var overTimeout = timeout + TimeSpan.FromMilliseconds(500);
+                Source.Tick(overTimeout, TimeSpan.FromMilliseconds(1), 1).RunWith(this.SinkProbe<int>(), Materializer)
+                    .Request(1)
+                    .ExpectNext<int>(timeout, _ => true);
+            }).Message.Should().Contain("Timeout");
+        }
+
+        [Fact]
         public void TestSink_Probe_ExpectNextN_given_a_number_of_elements()
         {
             Source.From(Enumerable.Range(1, 4)).RunWith(this.SinkProbe<int>(), Materializer)

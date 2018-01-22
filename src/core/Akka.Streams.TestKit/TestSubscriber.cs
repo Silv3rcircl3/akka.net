@@ -375,8 +375,18 @@ namespace Akka.Streams.TestKit
             /// <typeparam name="TOther">The <see cref="Type"/> of the expected message</typeparam>
             /// <param name="predicate">The <see cref="Predicate{T}"/> that is applied to the message</param>
             /// <returns>The next element</returns>
-            public TOther ExpectNext<TOther>(Predicate<TOther> predicate) => _probe.ExpectMsg<OnNext<TOther>>(x => predicate(x.Element)).Element;
-            
+            public TOther ExpectNext<TOther>(Predicate<TOther> predicate) => ExpectNext(null, predicate);
+
+
+            /// <summary>
+            /// Expect next element and test it with the <paramref name="predicate"/>
+            /// </summary>
+            /// <typeparam name="TOther">The <see cref="Type"/> of the expected message</typeparam>
+            /// <param name="max">Wait no more than max time, otherwise throw AssertionError</param>
+            /// <param name="predicate">The <see cref="Predicate{T}"/> that is applied to the message</param>
+            /// <returns>The next element</returns>
+            public TOther ExpectNext<TOther>(TimeSpan? max, Predicate<TOther> predicate) => _probe.ExpectMsg<OnNext<TOther>>(x => predicate(x.Element), max).Element;
+
             /// <summary>
             /// Expect next element and test it with the <paramref name="predicate"/>
             /// </summary>
@@ -389,7 +399,10 @@ namespace Akka.Streams.TestKit
                 return this;
             }
 
-            public TOther ExpectEvent<TOther>(Func<ISubscriberEvent, TOther> func) => func(_probe.ExpectMsg<ISubscriberEvent>(hint: "message matching function"));
+            public TOther ExpectEvent<TOther>(TimeSpan? max, Func<ISubscriberEvent, TOther> func) => 
+                func(_probe.ExpectMsg<ISubscriberEvent>(max, hint: "message matching function"));
+
+            public TOther ExpectEvent<TOther>(Func<ISubscriberEvent, TOther> func) => ExpectEvent(null, func);
 
             /// <summary>
             /// Receive messages for a given duration or until one does not match a given partial function.
