@@ -924,12 +924,12 @@ namespace Akka.Streams.Dsl
 
                 SetHandler(_stage.In, this);
 
-                var outIdx = 0;
-                var outEnumerator = stage.Shape.Outlets.GetEnumerator();
-                while (outEnumerator.MoveNext())
+                var size = stage._outlets.Length;
+                var index = 0;
+                while (index < size)
                 {
-                    var o = (Outlet<T>)outEnumerator.Current;
-                    var i = outIdx;
+                    var o = stage._outlets[index];
+                    var i = index; // close over val
                     SetHandler(o, onPull: () =>
                     {
                         _pending[i] = false;
@@ -951,7 +951,7 @@ namespace Akka.Streams.Dsl
                             }
                         }
                     });
-                    outIdx++;
+                    index++;
                 }
             }
 
@@ -959,18 +959,17 @@ namespace Akka.Streams.Dsl
             {
                 _pendingCount = _downstreamsRunning;
                 var element = Grab(_stage.In);
-                var idx = 0;
-                var enumerator = _stage.Shape.Outlets.GetEnumerator();
-                while (enumerator.MoveNext())
+                var index = 0;
+                var size = _stage._outlets.Length;
+                while (index < size)
                 {
-                    var o = (Outlet<T>)enumerator.Current;
-                    var i = idx;
+                    var o = _stage._outlets[index];
                     if (!IsClosed(o))
                     {
                         Push(o, element);
-                        _pending[i] = true;
+                        _pending[index] = true;
                     }
-                    idx++;
+                    index++;
                 }
             }
 
@@ -981,6 +980,8 @@ namespace Akka.Streams.Dsl
         }
         #endregion
 
+
+        private readonly Outlet<T>[] _outlets;
         private readonly int _outputPorts;
         private readonly bool _eagerCancel;
 
@@ -998,11 +999,11 @@ namespace Akka.Streams.Dsl
             _outputPorts = outputPorts;
             _eagerCancel = eagerCancel;
 
-            var outlets = new Outlet<T>[outputPorts];
+            _outlets = new Outlet<T>[outputPorts];
             for (int i = 0; i < outputPorts; i++)
-                outlets[i] = new Outlet<T>("Broadcast.out" + i);
+                _outlets[i] = new Outlet<T>("Broadcast.out" + i);
 
-            Shape = new UniformFanOutShape<T, T>(In, outlets);
+            Shape = new UniformFanOutShape<T, T>(In, _outlets);
         }
 
         /// <summary>
@@ -1710,17 +1711,18 @@ namespace Akka.Streams.Dsl
             public Logic(Concat<TIn, TOut> stage) : base(stage.Shape)
             {
                 _stage = stage;
-                var iidx = 0;
-                var inEnumerator = stage.Shape.Ins.GetEnumerator();
-                while (inEnumerator.MoveNext())
+                var size = stage._inlets.Length;
+                var index = 0;
+                
+                while (index < size)
                 {
-                    var i = inEnumerator.Current;
-                    var idx = iidx;
-                    SetHandler(i,
-                        onPush: () => Push(stage.Out, Grab(i)),
+                    var inlet = stage._inlets[index];
+                    var i = index;
+                    SetHandler(inlet,
+                        onPush: () => Push(stage.Out, Grab(inlet)),
                         onUpstreamFinish: () =>
                         {
-                            if (idx == _activeStream)
+                            if (i == _activeStream)
                             {
                                 _activeStream++;
                                 // skip closed inputs
@@ -1729,7 +1731,7 @@ namespace Akka.Streams.Dsl
                                 else if (IsAvailable(stage.Out)) Pull(stage.In(_activeStream));
                             }
                         });
-                    iidx++;
+                    index++;
                 }
 
                 SetHandler(stage.Out, this);
@@ -1741,6 +1743,7 @@ namespace Akka.Streams.Dsl
         #endregion
 
         private readonly int _inputPorts;
+        private readonly Inlet<TIn>[] _inlets;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="Concat{TIn, TOut}"/> class.
@@ -1754,11 +1757,11 @@ namespace Akka.Streams.Dsl
             if (inputPorts <= 1) throw new ArgumentException("A Concat must have more than 1 input port", nameof(inputPorts));
             _inputPorts = inputPorts;
 
-            var inlets = new Inlet<TIn>[inputPorts];
+            _inlets = new Inlet<TIn>[inputPorts];
             for (var i = 0; i < inputPorts; i++)
-                inlets[i] = new Inlet<TIn>("Concat.in" + i);
+                _inlets[i] = new Inlet<TIn>("Concat.in" + i);
 
-            Shape = new UniformFanInShape<TIn, TOut>(Out, inlets);
+            Shape = new UniformFanInShape<TIn, TOut>(Out, _inlets);
         }
 
         /// <summary>
