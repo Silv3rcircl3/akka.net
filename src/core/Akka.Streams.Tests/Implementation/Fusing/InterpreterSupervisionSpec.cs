@@ -226,7 +226,7 @@ namespace Akka.Streams.Tests.Implementation.Fusing
         [Fact]
         public void Interpreter_error_handling_should_fail_when_Expand_seed_throws()
         {
-            WithOneBoundedSetup<int>(new Expand<int, int>(x => { if (x == 2) throw TE(); return new List<int> {x}.Concat(Enumerable.Repeat(-Math.Abs(x), 100)).GetEnumerator(); }),
+            WithOneBoundedSetup(new Expand<int, int>(x => { if (x == 2) throw TE(); return new List<int> {x}.Concat(Enumerable.Repeat(-Math.Abs(x), 100)).GetEnumerator(); }),
                 (lastEvents, upstream, downstream) =>
                 {
                     lastEvents().Should().BeEquivalentTo(new RequestOne());
@@ -251,7 +251,7 @@ namespace Akka.Streams.Tests.Implementation.Fusing
         [Fact]
         public void Interpreter_error_handling_should_fail_when_Expand_extrapolate_throws()
         {
-            WithOneBoundedSetup<int>(new Expand<int, int>(x => { if (x == 2) return ContinuallyThrow(); return new List<int> {x}.Concat(Enumerable.Repeat(-Math.Abs(x), 100)).GetEnumerator(); }),
+            WithOneBoundedSetup(new Expand<int, int>(x => { if (x == 2) return ContinuallyThrow(); return new List<int> {x}.Concat(Enumerable.Repeat(-Math.Abs(x), 100)).GetEnumerator(); }),
                 (lastEvents, upstream, downstream) =>
                 {
                     lastEvents().Should().BeEquivalentTo(new RequestOne());
@@ -273,15 +273,13 @@ namespace Akka.Streams.Tests.Implementation.Fusing
                 });
         }
 
-        private Exception TE()
-        {
-            return new TestException("TEST");
-        }
+        private Exception TE() => new TestException("TEST");
 
         private IEnumerator<int> ContinuallyThrow()
         {
-            Func<int> thrower = () => { throw TE(); };
-            yield return thrower();
+            int Thrower() => throw TE();
+
+            yield return Thrower();
         }
     }
 }

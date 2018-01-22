@@ -10,7 +10,6 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Akka.Streams.Implementation.Fusing;
 using Akka.Streams.Stage;
-using Akka.Streams.Supervision;
 using Akka.Streams.TestKit.Tests;
 using FluentAssertions;
 using Xunit;
@@ -96,7 +95,7 @@ namespace Akka.Streams.Tests.Implementation.Fusing
         [Fact]
         public void Interpreter_should_work_with_only_boundary_ops()
         {
-            WithOneBoundedSetup(new IStage<int, int>[0],
+            WithOneBoundedSetup<int>(new IGraphStageWithMaterializedValue<Shape, object>[0], 
                 (lastEvents, upstream, downstream) =>
                 {
                     lastEvents().Should().BeEmpty();
@@ -328,7 +327,7 @@ namespace Akka.Streams.Tests.Implementation.Fusing
         [Fact]
         public void Interpreter_should_implement_batch_conflate()
         {
-            WithOneBoundedSetup<int>(new Batch<int, int>(1L, e => 0L, e => e, (agg, x) => agg + x),
+            WithOneBoundedSetup(new Batch<int, int>(1L, e => 0L, e => e, (agg, x) => agg + x),
                 (lastEvents, upstream, downstream) =>
                 {
                     lastEvents().Should().BeEquivalentTo(new RequestOne());
@@ -362,7 +361,7 @@ namespace Akka.Streams.Tests.Implementation.Fusing
         [Fact]
         public void Interpreter_should_implement_expand()
         {
-            WithOneBoundedSetup<int>(new Expand<int, int>(e => Enumerable.Repeat(e, int.MaxValue).GetEnumerator()),
+            WithOneBoundedSetup(new Expand<int, int>(e => Enumerable.Repeat(e, int.MaxValue).GetEnumerator()),
                 (lastEvents, upstream, downstream) =>
                 {
                     lastEvents().Should().BeEquivalentTo(new RequestOne());
@@ -686,25 +685,6 @@ namespace Akka.Streams.Tests.Implementation.Fusing
                 });
         }
 
-        [Fact]
-        public void Interpreter_should_not_allow_AbsorbTermination_from_OnDownstreamFinish()
-        {
-            // This test must be kept since it tests the compatibility layer, which while is deprecated it is still here.
-            WithOneBoundedSetup(ToGraphStage(new InvalidAbsorbTermination<int>()),
-                (lastEvents, upstream, downstream) =>
-                {
-                    lastEvents().Should().BeEmpty();
-
-                    EventFilter.Exception<NotSupportedException>(
-                        "It is not allowed to call AbsorbTermination() from OnDownstreamFinish.")
-                        .ExpectOne(() =>
-                        {
-                            downstream.Cancel();
-                            lastEvents().Should().BeEquivalentTo(new Cancel());
-                        });
-                });
-        }
-
         public class Doubler<T> : SimpleLinearGraphStage<T>
         {
             #region Logic
@@ -820,25 +800,6 @@ namespace Akka.Streams.Tests.Implementation.Fusing
             }
 
             protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
-        }
-
-        [Obsolete("Please use GraphStage instead.")]
-        public class InvalidAbsorbTermination<T> : PushPullStage<T, T>
-        {
-            public override ISyncDirective OnPush(T element, IContext<T> context)
-            {
-                return context.Push(element);
-            }
-
-            public override ISyncDirective OnPull(IContext<T> context)
-            {
-                return context.Pull();
-            }
-
-            public override ITerminationDirective OnDownstreamFinish(IContext<T> context)
-            {
-                return context.AbsorbTermination();
-            }
         }
     }
 }

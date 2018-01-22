@@ -959,17 +959,6 @@ namespace Akka.Streams.Tests.Implementation.Fusing
             }
         }
 
-        public PushPullGraphStage<TIn, TOut> ToGraphStage<TIn, TOut>(IStage<TIn, TOut> stage)
-        {
-            var s = stage;
-            return new PushPullGraphStage<TIn, TOut>(_ => s, Attributes.None);
-        }
-
-        public IGraphStageWithMaterializedValue<Shape, object>[] ToGraphStage<TIn, TOut>(IStage<TIn, TOut>[] stages)
-        {
-            return stages.Select(ToGraphStage).Cast<IGraphStageWithMaterializedValue<Shape, object>>().ToArray();
-        }
-
         public void WithTestSetup(Action<TestSetup, Func<ISet<TestSetup.ITestEvent>>> spec)
         {
             var setup = new TestSetup(Sys);
@@ -992,32 +981,6 @@ namespace Akka.Streams.Tests.Implementation.Fusing
         {
             var setup = new TestSetup(Sys);
             spec(setup, setup.Builder, setup.LastEvents);
-        }
-
-        public void WithOneBoundedSetup<T>(IStage<T, T> op,
-            Action
-                <Func<ISet<OneBoundedSetup.ITestEvent>>, OneBoundedSetup.UpstreamOneBoundedProbe<T>,
-                    OneBoundedSetup.DownstreamOneBoundedPortProbe<T>> spec)
-        {
-            WithOneBoundedSetup<T>(ToGraphStage(op), spec);
-        }
-
-        public void WithOneBoundedSetup<T>(IStage<T, T>[] ops,
-            Action
-                <Func<ISet<OneBoundedSetup.ITestEvent>>, OneBoundedSetup.UpstreamOneBoundedProbe<T>,
-                    OneBoundedSetup.DownstreamOneBoundedPortProbe<T>> spec)
-        {
-            WithOneBoundedSetup<T>(ToGraphStage(ops), spec);
-        }
-
-        public void WithOneBoundedSetup<T>(IGraphStageWithMaterializedValue<Shape, object> op,
-            Action
-                <Func<ISet<OneBoundedSetup.ITestEvent>>, OneBoundedSetup.UpstreamOneBoundedProbe<T>,
-                    OneBoundedSetup.DownstreamOneBoundedPortProbe<T>>
-                spec)
-        {
-            WithOneBoundedSetup<T>(new[] {op}, spec);
-            
         }
 
         public void WithOneBoundedSetup<T>(IGraphStageWithMaterializedValue<Shape, object>[] ops,

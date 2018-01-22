@@ -1204,25 +1204,7 @@ namespace Akka.Streams.Dsl
         {
             return (Flow<TIn, TOut, TMat>)InternalFlowOperations.Buffer(flow, size, strategy);
         }
-
-        /// <summary>
-        /// Generic transformation of a stream with a custom processing <see cref="IStage{TIn, TOut}"/>.
-        /// This operator makes it possible to extend the <see cref="Flow"/> API when there is no specialized
-        /// operator that performs the transformation.
-        /// </summary>
-        /// <typeparam name="TIn">TBD</typeparam>
-        /// <typeparam name="TOut1">TBD</typeparam>
-        /// <typeparam name="TOut2">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <param name="flow">TBD</param>
-        /// <param name="stageFactory">TBD</param>
-        /// <returns>TBD</returns>
-        [Obsolete("Use Via(GraphStage) instead. [1.1.2]")]
-        public static Flow<TIn, TOut2, TMat> Transform<TIn, TOut1, TOut2, TMat>(this Flow<TIn, TOut1, TMat> flow, Func<IStage<TOut1, TOut2>> stageFactory)
-        {
-            return (Flow<TIn, TOut2, TMat>)InternalFlowOperations.Transform(flow, stageFactory);
-        }
-
+        
         /// <summary>
         /// Takes up to <paramref name="n"/> elements from the stream and returns a pair containing a strict sequence of the taken element
         /// and a stream representing the remaining elements. If <paramref name="n"/> is zero or negative, then this will return a pair

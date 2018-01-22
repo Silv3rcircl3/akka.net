@@ -191,17 +191,17 @@ namespace Akka.Streams.Implementation.Fusing
     /// <typeparam name="TOut">TBD</typeparam>
     internal sealed class EnumeratorInterpreter<TIn, TOut> : IEnumerable<TOut>
     {
-        private readonly IEnumerable<PushPullStage<TIn, TOut>> _ops;
+        private readonly IEnumerable<IGraphStageWithMaterializedValue<FlowShape<TIn, TOut>, object>> _stages;
         private readonly EnumeratorInterpreter.EnumeratorUpstream<TIn> _upstream;
         private readonly EnumeratorInterpreter.EnumeratorDownstream<TOut> _downstream = new EnumeratorInterpreter.EnumeratorDownstream<TOut>();
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="input">TBD</param>
-        /// <param name="ops">TBD</param>
-        public EnumeratorInterpreter(IEnumerator<TIn> input, IEnumerable<PushPullStage<TIn, TOut>> ops)
+        /// <param name="stages">TBD</param>
+        public EnumeratorInterpreter(IEnumerator<TIn> input, IEnumerable<IGraphStageWithMaterializedValue<FlowShape<TIn, TOut>, object>> stages)
         {
-            _ops = ops;
+            _stages = stages;
             _upstream = new EnumeratorInterpreter.EnumeratorUpstream<TIn>(input);
 
             Init();
@@ -210,7 +210,7 @@ namespace Akka.Streams.Implementation.Fusing
         private void Init()
         {
             var i = 0;
-            var length = _ops.Count();
+            var length = _stages.Count();
             var attributes = new Attributes[length];
             for (var j = 0; j < length; j++) attributes[j] = Attributes.None;
             var ins = new Inlet[length + 1];
@@ -224,11 +224,10 @@ namespace Akka.Streams.Implementation.Fusing
             outs[0] = null;
             outOwners[0] = GraphInterpreter.Boundary;
 
-            var opsEnumerator = _ops.GetEnumerator();
+            var opsEnumerator = _stages.GetEnumerator();
             while (opsEnumerator.MoveNext())
             {
-                var op = opsEnumerator.Current;
-                var stage = new PushPullGraphStage<TIn, TOut>(_ => op, Attributes.None);
+                var stage = opsEnumerator.Current;
                 stages[i] = stage;
                 ins[i] = stage.Shape.Inlet;
                 inOwners[i] = i;

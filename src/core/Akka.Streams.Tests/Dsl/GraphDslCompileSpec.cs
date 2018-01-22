@@ -44,30 +44,54 @@ namespace Akka.Streams.Tests.Dsl
 
         }
 
-        private sealed class OpStage<TIn, TOut> : PushStage<TIn, TOut> where TIn : TOut
+        private sealed class OpStage<TIn, TOut> : GraphStage<FlowShape<TIn, TOut>> where TIn : TOut
         {
-            public override ISyncDirective OnPush(TIn element, IContext<TOut> context)
+            private sealed class Logic : InAndOutGraphStageLogic
             {
-                return context.Push(element);
+                private readonly OpStage<TIn, TOut> _stage;
+
+                public Logic(OpStage<TIn, TOut> stage) : base(stage.Shape)
+                {
+                    _stage = stage;
+                    SetHandler(_stage._in, _stage._out, this);
+                }
+
+                public override void OnPush() => Push(_stage._out, Grab(_stage._in));
+
+                public override void OnPull() => Pull(_stage._in);
             }
+
+            private readonly Inlet<TIn> _in;
+            private readonly Outlet<TOut> _out;
+
+            public OpStage()
+            {
+                _in = new Inlet<TIn>("op.in");
+                _out = new Outlet<TOut>("op.out");
+                Shape=new FlowShape<TIn, TOut>(_in, _out);
+            }
+
+            public override FlowShape<TIn, TOut> Shape { get; }
+
+            protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
         }
 
-        private static IStage<TIn, TOut> Op<TIn, TOut>() where TIn : TOut => new OpStage<TIn, TOut>();
+        private static OpStage<TIn, TOut> Op<TIn, TOut>() where TIn : TOut => new OpStage<TIn, TOut>();
 
         private static IEnumerator<Apple> Apples() => Enumerable.Repeat(new Apple(), int.MaxValue).GetEnumerator();
 
         private static Flow<string, string, NotUsed> F1
-            => Flow.Create<string>().Transform(Op<string, string>).Named("F1");
+            => Flow.Create<string>().Via(Op<string, string>()).Named("F1");
         private static Flow<string, string, NotUsed> F2
-            => Flow.Create<string>().Transform(Op<string, string>).Named("F2");
+            => Flow.Create<string>().Via(Op<string, string>()).Named("F2");
         private static Flow<string, string, NotUsed> F3
-            => Flow.Create<string>().Transform(Op<string, string>).Named("F3");
+            => Flow.Create<string>().Via(Op<string, string>()).Named("F3");
         private static Flow<string, string, NotUsed> F4
-            => Flow.Create<string>().Transform(Op<string, string>).Named("F4");
+            => Flow.Create<string>().Via(Op<string, string>()).Named("F4");
         private static Flow<string, string, NotUsed> F5
-            => Flow.Create<string>().Transform(Op<string, string>).Named("F5");
+            => Flow.Create<string>().Via(Op<string, string>()).Named("F5");
         private static Flow<string, string, NotUsed> F6
-            => Flow.Create<string>().Transform(Op<string, string>).Named("F6");
+            => Flow.Create<string>().Via(Op<string, string>()).Named("F6");
 
         private static Source<string, NotUsed> In1 => Source.From(new[] { "a", "b", "c" });
         private static Source<string, NotUsed> In2 => Source.From(new[] { "d", "e", "f" });
@@ -228,7 +252,7 @@ namespace Akka.Streams.Tests.Dsl
                 var out9 = Sink.AsPublisher<string>(false).MapMaterializedValue(_ => NotUsed.Instance);
                 var out10 = Sink.AsPublisher<string>(false).MapMaterializedValue(_ => NotUsed.Instance);
                 Func<string, Flow<string, string, NotUsed>> f =
-                    s => Flow.Create<string>().Transform(Op<string, string>).Named(s);
+                    s => Flow.Create<string>().Via(Op<string, string>()).Named(s);
 
                 b.From(in7).Via(f("a")).Via(b7).Via(f("b")).Via(m11).Via(f("c")).Via(b11).Via(f("d")).To(out2);
                 b.From(b11).Via(f("e")).Via(m9).Via(f("f")).To(out9);

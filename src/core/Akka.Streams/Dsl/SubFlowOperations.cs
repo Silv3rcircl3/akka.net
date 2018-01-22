@@ -12,7 +12,6 @@ using System.Threading.Tasks;
 using Akka.Event;
 using Akka.IO;
 using Akka.Streams.Dsl.Internal;
-using Akka.Streams.Stage;
 using Akka.Streams.Supervision;
 using Akka.Streams.Util;
 // ReSharper disable UnusedMember.Global
@@ -1158,24 +1157,6 @@ namespace Akka.Streams.Dsl
         public static SubFlow<TOut, TMat, TClosed> Buffer<TOut, TMat, TClosed>(this SubFlow<TOut, TMat, TClosed> flow, int size, OverflowStrategy strategy)
         {
             return (SubFlow<TOut, TMat, TClosed>)InternalFlowOperations.Buffer(flow, size, strategy);
-        }
-
-        /// <summary>
-        /// Generic transformation of a stream with a custom processing <see cref="IStage{TIn, TOut}"/>.
-        /// This operator makes it possible to extend the <see cref="Flow"/> API when there is no specialized
-        /// operator that performs the transformation.
-        /// </summary>
-        /// <typeparam name="TOut1">TBD</typeparam>
-        /// <typeparam name="TOut2">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <typeparam name="TClosed">TBD</typeparam>
-        /// <param name="flow">TBD</param>
-        /// <param name="stageFactory">TBD</param>
-        /// <returns>TBD</returns>
-        [Obsolete("Use Via(GraphStage) instead. [1.1.2]")]
-        public static SubFlow<TOut2, TMat, TClosed> Transform<TOut1, TOut2, TMat, TClosed>(this SubFlow<TOut1, TMat, TClosed> flow, Func<IStage<TOut1, TOut2>> stageFactory)
-        {
-            return (SubFlow<TOut2, TMat, TClosed>)InternalFlowOperations.Transform(flow, stageFactory);
         }
 
         /// <summary>

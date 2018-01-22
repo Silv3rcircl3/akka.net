@@ -8,13 +8,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Threading.Tasks;
 using Akka.Event;
 using Akka.IO;
 using Akka.Streams.Implementation;
-using Akka.Streams.Implementation.Stages;
-using Akka.Streams.Stage;
 using Akka.Streams.Supervision;
 using Akka.Streams.Util;
 
@@ -33,21 +30,6 @@ namespace Akka.Streams.Dsl.Internal
         /// <typeparam name="T">TBD</typeparam>
         /// <returns>TBD</returns>
         internal static Func<T, object> Identity<T>() => arg => arg;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <typeparam name="TOut2">TBD</typeparam>
-        /// <typeparam name="TOut">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <param name="flow">TBD</param>
-        /// <param name="op">TBD</param>
-        /// <returns>TBD</returns>
-        internal static IFlow<TOut2, TMat> AndThen<TOut2, TOut, TMat>(this IFlow<TOut, TMat> flow,
-            SymbolicStage<TOut, TOut2> op)
-        {
-            return flow.Via(new SymbolicGraphStage<TOut, TOut2>(op));
-        }
 
         /// <summary>
         /// Recover allows to send last element on failure and gracefully complete the stream
@@ -416,9 +398,9 @@ namespace Akka.Streams.Dsl.Internal
         /// <para>
         /// Cancels when <paramref name="predicate"/> returned false or downstream cancels
         /// </para>
-        /// <seealso cref="Limit{T, TMat}(Source{T, TMat}, long)"/> <seealso cref="LimitWeighted{T, TMat}(Source{T, TMat}, long, Func{T, long})"/>
+        /// <seealso cref="Limit{T,TMat}"/> <seealso cref="LimitWeighted{T,TMat}"/>
         /// </summary>
-        /// <typeparam name="TOut">TBD</typeparam>
+        /// <typeparam name="T">TBD</typeparam>
         /// <typeparam name="TMat">TBD</typeparam>
         /// <param name="flow">TBD</param>
         /// <param name="predicate">TBD</param>
@@ -1158,23 +1140,6 @@ namespace Akka.Streams.Dsl.Internal
         public static IFlow<T, TMat> Buffer<T, TMat>(this IFlow<T, TMat> flow, int size, OverflowStrategy strategy)
         {
             return flow.Via(new Fusing.Buffer<T>(size, strategy));
-        }
-
-        /// <summary>
-        /// Generic transformation of a stream with a custom processing <see cref="IStage{TIn, TOut}"/>.
-        /// This operator makes it possible to extend the <see cref="Flow"/> API when there is no specialized
-        /// operator that performs the transformation.
-        /// </summary>
-        /// <typeparam name="TIn">TBD</typeparam>
-        /// <typeparam name="TOut">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <param name="flow">TBD</param>
-        /// <param name="stageFactory">TBD</param>
-        /// <returns>TBD</returns>
-        public static IFlow<TOut, TMat> Transform<TIn, TOut, TMat>(this IFlow<TIn, TMat> flow,
-            Func<IStage<TIn, TOut>> stageFactory)
-        {
-            return flow.Via(new PushPullGraphStage<TIn, TOut>(attr => stageFactory(), Attributes.None));
         }
 
         /// <summary>

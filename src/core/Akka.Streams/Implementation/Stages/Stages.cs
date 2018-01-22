@@ -8,7 +8,6 @@
 using System;
 using System.Threading.Tasks;
 using Akka.Streams.Stage;
-using Akka.Streams.Supervision;
 
 namespace Akka.Streams.Implementation.Stages
 {
@@ -431,80 +430,7 @@ namespace Akka.Streams.Implementation.Stages
         /// </summary>
         public static readonly Attributes SeqSink = Attributes.CreateName("seqSink");
     }
-
-    /// <summary>
-    /// Stage that is backed by a GraphStage but can be symbolically introspected
-    /// </summary>
-    /// <typeparam name="TIn">TBD</typeparam>
-    /// <typeparam name="TOut">TBD</typeparam>
-    public sealed class SymbolicGraphStage<TIn, TOut> : PushPullGraphStage<TIn, TOut>
-    {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="symbolicStage">TBD</param>
-        public SymbolicGraphStage(ISymbolicStage<TIn, TOut> symbolicStage) : base(symbolicStage.Create, symbolicStage.Attributes)
-        {
-        }
-    }
-
-    /// <summary>
-    /// TBD
-    /// </summary>
-    /// <typeparam name="TIn">TBD</typeparam>
-    /// <typeparam name="TOut">TBD</typeparam>
-    public interface ISymbolicStage<in TIn, out TOut> : IStage<TIn, TOut>
-    {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="effectiveAttributes">TBD</param>
-        /// <returns>TBD</returns>
-        IStage<TIn, TOut> Create(Attributes effectiveAttributes);
-    }
-
-    /// <summary>
-    /// TBD
-    /// </summary>
-    /// <typeparam name="TIn">TBD</typeparam>
-    /// <typeparam name="TOut">TBD</typeparam>
-    public abstract class SymbolicStage<TIn, TOut> : ISymbolicStage<TIn, TOut>
-    {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        protected SymbolicStage(Attributes attributes)
-        {
-            Attributes = attributes;
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="effectiveAttributes">TBD</param>
-        /// <returns>TBD</returns>
-        public abstract IStage<TIn, TOut> Create(Attributes effectiveAttributes);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        protected Decider Supervision(Attributes attributes)
-            => attributes.GetAttribute(new ActorAttributes.SupervisionStrategy(Deciders.StoppingDecider)).Decider;
-    }
-
+    
     /// <summary>
     /// TBD
     /// </summary>
