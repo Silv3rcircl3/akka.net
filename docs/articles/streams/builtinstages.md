@@ -727,6 +727,96 @@ a function has to be provided to calculate the individual cost of each element.
 
 **completes** when upstream completes
 
+#### Intersperse
+
+Intersperse stream with provided element similar to `String.Join`. It can inject start and end marker elements to stream.
+
+**emits** when upstream emits an element or before with the `start` element if provided
+
+**backpressures** when downstream backpressures
+
+**completes** when upstream completes
+
+#### Limit
+
+Limit number of element from upstream to given `max` number.
+
+**emits** when upstream emits and the number of emitted elements has not reached max
+
+**backpressures** when downstream backpressures
+
+**completes** when upstream completes and the number of emitted elements has not reached max
+
+#### LimitWeighted
+
+Ensure stream boundedness by evaluating the cost of incoming elements using a cost function.
+Evaluated cost of each element defines how many elements will be allowed to travel downstream.
+
+**emits** when upstream emits and the number of emitted elements has not reached max
+
+**backpressures** when downstream backpressures
+
+**completes** when upstream completes and the number of emitted elements has not reached max
+
+#### Log
+
+Log elements flowing through the stream as well as completion and erroring. By default element and
+completion signals are logged on debug level, and errors are logged on Error level.
+This can be changed by calling `Attributes.CreateLogLevels(...)` on the given Flow.
+
+**emits** when upstream emits
+
+**backpressures** when downstream backpressures
+
+**completes** when upstream completes
+
+#### RecoverWithRetries
+
+Switch to alternative Source on flow failure. It stays in effect after a failure has been recovered up to `attempts`
+number of times. Each time a failure is fed into the partial function and a new Source may be materialized.
+
+**emits** when element is available from the upstream or upstream is failed and element is available from alternative Source
+
+**backpressures** when downstream backpressures
+
+**completes** when upstream completes or upstream failed with exception partial function can handle
+
+
+# Flow stages composed of Sinks and Sources
+
+#### Flow.FromSinkAndSource
+
+
+Creates a `Flow` from a `Sink` and a `Source` where the Flow's input will be sent to the `Sink` 
+and the `Flow` 's output will come from the Source.
+
+Note that termination events, like completion and cancelation is not automatically propagated through to the "other-side"
+of the such-composed Flow. Use ``CoupledTerminationFlow`` if you want to couple termination of both of the ends,
+for example most useful in handling websocket connections.
+
+#### CoupledTerminationFlow.FromSinkAndSource
+
+
+Allows coupling termination (cancellation, completion, erroring) of Sinks and Sources while creating a Flow.
+Similar to `Flow.FromSinkAndSource` however that API does not connect the completion signals of the wrapped stages.
+
+Similar to `Flow.FromSinkAndSource` however couples the termination of these two stages.
+
+E.g. if the emitted `Flow` gets a cancellation, the `Source` of course is cancelled,
+however the Sink will also be completed. The table below illustrates the effects in detail:
+
+
+| Returned Flow  | Sink (in) | Source (out) |
+|----------------|-----------|--------------|
+| cause: upstream (sink-side) receives completion | effect: receives completion | effect: receives cancel |
+| cause: upstream (sink-side) receives error | effect: receives error | effect: receives cancel |
+| cause: downstream (source-side) receives cancel | effect: completes | effect: receives cancel |
+| effect: cancels upstream, completes downstream | effect: completes | 	cause: signals complete |
+| effect: cancels upstream, errors downstream | effect: receives error | cause: signals error or throws |
+
+
+The order in which the `in` and `out` sides receive their respective completion signals is not defined, do not rely on its ordering.
+
 
 # Asynchronous processing stages
 
