@@ -460,7 +460,7 @@ namespace Akka.Streams.Dsl
             => source as Source<T, TMat> ?? new Source<T, TMat>(source.Module);
 
         /// <summary>
-        /// Start a new <see cref="Source{TOut,TMat}"/> from the given <see cref="Task{T}"/>. The stream will consist of
+        /// Starts a new <see cref="Source{TOut,TMat}"/> from the given <see cref="Task{T}"/>. The stream will consist of
         /// one element when the <see cref="Task{T}"/> is completed with a successful value, which
         /// may happen before or after materializing the <see cref="IFlow{TOut,TMat}"/>.
         /// The stream terminates with a failure if the task is completed with a failure.
@@ -469,6 +469,16 @@ namespace Akka.Streams.Dsl
         /// <param name="task">TBD</param>
         /// <returns>TBD</returns>
         public static Source<T, NotUsed> FromTask<T>(Task<T> task) => FromGraph(new TaskSource<T>(task));
+
+        /// <summary>
+        /// Streams the elements of the given task source once it successfully completes.
+        /// If the <see cref="Task{TResult}"/> fails the stream is failed.
+        /// </summary>
+        /// <typeparam name="T">TBD</typeparam>
+        /// <typeparam name="TMat">TBD</typeparam>
+        /// <param name="task">TBD</param>
+        /// <returns>TBD</returns>
+        public static Source<T, Task<TMat>> FromTaskSource<T, TMat>(Task<Source<T, TMat>> task) => FromGraph(new TaskFlattenSource<T, TMat>(task));
 
         /// <summary>
         /// Elements are emitted periodically with the specified interval.

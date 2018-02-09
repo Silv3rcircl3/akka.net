@@ -73,6 +73,15 @@ If the task fails the stream is failed with that exception.
 
 **completes** after the task has completed
 
+#### FromTaskSource
+
+Streams the elements of the given task source once it successfully completes. 
+If the task fails the stream is failed.
+
+**emits** the next value from the `task` source, once it has completed
+
+**completes** after the `task` source completes
+
 #### Unfold
 
 Stream the result of a function as long as it returns not ``null``, the value inside the option

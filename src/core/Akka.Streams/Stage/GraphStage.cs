@@ -1679,7 +1679,7 @@ namespace Akka.Streams.Stage
         protected class SubSinkInlet<T>
         {
             private readonly string _name;
-            private InHandler _handler;
+            private IInHandler _handler;
             private Option<T> _elem;
             private bool _closed;
             private bool _pulled;
@@ -1727,7 +1727,7 @@ namespace Akka.Streams.Stage
             /// TBD
             /// </summary>
             /// <param name="handler">TBD</param>
-            public void SetHandler(InHandler handler) => _handler = handler;
+            public void SetHandler(IInHandler handler) => _handler = handler;
 
             /// <summary>
             /// TBD

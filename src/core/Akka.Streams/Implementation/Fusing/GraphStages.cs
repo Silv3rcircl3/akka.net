@@ -818,6 +818,130 @@ namespace Akka.Streams.Implementation.Fusing
         protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
     }
 
+    public sealed class TaskFlattenSource<T, TMat> : GraphStageWithMaterializedValue<SourceShape<T>, Task<TMat>>
+    {
+        private sealed class Logic : InAndOutGraphStageLogic
+        {
+            private readonly TaskFlattenSource<T, TMat> _stage;
+            private readonly TaskCompletionSource<TMat> _materialized;
+            private readonly Attributes _attributes;
+            private readonly SubSinkInlet<T> _sinkIn;
+
+            public Logic(TaskFlattenSource<T, TMat> stage, TaskCompletionSource<TMat> materialized, Attributes attributes) : base(stage.Shape)
+            {
+                _stage = stage;
+                _materialized = materialized;
+                _attributes = attributes;
+                _sinkIn = new SubSinkInlet<T>(this, "FutureFlattenSource.in");
+
+                // initial handler (until future completes)
+                SetHandler(_stage.Out, onPull: DoNothing, onDownstreamFinish: () =>
+                {
+                    if (!_materialized.Task.IsCanceled && !_materialized.Task.IsFaulted &&
+                        !_materialized.Task.IsCompleted)
+                    {
+                        // make sure we always yield the matval if possible, even if downstream cancelled
+                        // before the source was materialized
+                        stage.Task.ContinueWith(t =>
+                        {
+                            if (t.IsCanceled)
+                                _materialized.TrySetCanceled();
+                            else if (t.IsFaulted)
+                                _materialized.TrySetException(t.Exception);
+                            else
+                            {
+                                var runnable = Source.FromGraph(t.Result).To(Sink.Ignore<T>());
+                                var materializedValue =
+                                    Interpreter.SubFusingMaterializer.Materialize(runnable, _attributes);
+                                _materialized.TrySetResult(materializedValue);
+                            }
+                        });
+                    }
+
+                    CompleteStage();
+                });
+            }
+
+            public override void PreStart()
+            {
+                var callback = GetAsyncCallback<Task<Source<T, TMat>>>(OnTaskSourceCompleted);
+                _stage.Task.ContinueWith(callback);
+            }
+
+            public override void OnPush() => Push(_stage.Out, _sinkIn.Grab());
+
+            public override void OnPull() => _sinkIn.Pull();
+
+            public override void OnUpstreamFinish() => CompleteStage();
+
+            public override void PostStop()
+            {
+                if(!_sinkIn.IsClosed)
+                    _sinkIn.Cancel();
+            }
+
+            private void OnTaskSourceCompleted(Task<Source<T, TMat>> t)
+            {
+                if (t.IsCanceled || t.IsFaulted)
+                {
+                    _sinkIn.Cancel();
+                    if(t.IsCanceled)
+                        _materialized.TrySetCanceled();
+                    else
+                        _materialized.TrySetException(t.Exception);
+                    FailStage(t.Exception);
+                }
+                else
+                {
+                    try
+                    {
+                        var runnable = Source.FromGraph(t.Result).ToMaterialized(_sinkIn.Sink, Keep.Left);
+                        var materializedValue = Interpreter.SubFusingMaterializer.Materialize(runnable, _attributes);
+                        _materialized.TrySetResult(materializedValue);
+
+                        SetHandler(_stage.Out, this);
+                        _sinkIn.SetHandler(this);
+
+                        if(IsAvailable(_stage.Out))
+                            _sinkIn.Pull();
+                    }
+                    catch (Exception e)
+                    {
+                        _sinkIn.Cancel();
+                        _materialized.TrySetException(e);
+                        FailStage(e);
+                    }
+                }
+            }
+        }
+
+        public TaskFlattenSource(Task<Source<T, TMat>> task)
+        {
+            ReactiveStreamsCompliance.RequireNonNullElement(task);
+
+            Task = task;
+            Shape = new SourceShape<T>(Out);
+        }
+
+        public Task<Source<T, TMat>> Task { get; }
+
+        public Outlet<T> Out { get; } = new Outlet<T>("FutureFlattenSource.out");
+
+        public override SourceShape<T> Shape { get; }
+
+        protected override Attributes InitialAttributes { get; } = DefaultAttributes.TaskSource;
+
+        public override ILogicAndMaterializedValue<Task<TMat>> CreateLogicAndMaterializedValue(Attributes inheritedAttributes)
+        {
+            var materialized = new TaskCompletionSource<TMat>();
+            var logic = new Logic(this, materialized, inheritedAttributes);
+
+            return new LogicAndMaterializedValue<Task<TMat>>(logic, materialized.Task);
+        }
+
+        public override string ToString() => "FutureFlattenSource";
+    }
+
     /// <summary>
     /// TBD
     /// </summary>
