@@ -601,5 +601,86 @@ namespace Akka.Streams.Tests.Implementation
 
             protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
         }
+
+
+        [Fact(Skip = "Is implemented for PhasedFusingActorMaterializer, so skip it until materializer is ported")]
+        public void A_GraphStageLogic_must_give_a_good_error_message_if_in_handler_is_missing()
+        {
+            Action a = () => Source.Maybe<string>()
+                .Via(new MissingHandlerStage(false))
+                .RunWith(Sink.Ignore<string>(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("No handler defined in stage [stage-name] for in port [in");
+        }
+
+        [Fact(Skip = "Is implemented for PhasedFusingActorMaterializer, so skip it until materializer is ported")]
+        public void A_GraphStageLogic_must_give_a_good_error_message_if_out_handler_is_missing()
+        {
+            Action a = () => Source.Maybe<string>()
+                .Via(new MissingHandlerStage())
+                // just to have another graphstage downstream
+                .Select(_ => "whatever")
+                .RunWith(Sink.Ignore<string>(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("No handler defined in stage [stage-name] for out port [out");
+        }
+
+        [Fact(Skip = "Is implemented for PhasedFusingActorMaterializer, so skip it until materializer is ported")]
+        public void A_GraphStageLogic_must_give_a_good_error_message_if_out_handler_is_missing_with_downstream_boundary()
+        {
+            Action a = () => Source.Maybe<string>()
+                .Via(new MissingHandlerStage())
+                .RunWith(Sink.Ignore<string>().Async(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("No handler defined in stage [stage-name] for out port [out");
+        }
+
+        [Fact(Skip = "Is implemented for PhasedFusingActorMaterializer, so skip it until materializer is ported")]
+        public void A_GraphStageLogic_must_give_a_good_error_message_if_handler_is_missing_with_downstream_publisher()
+        {
+            Action a = () => Source.Maybe<string>().Async()
+                .Via(new MissingHandlerStage())
+                .RunWith(Sink.Ignore<string>(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("No handler defined in stage [stage-name] for out port [out");
+        }
+
+        [Fact(Skip = "Is implemented for PhasedFusingActorMaterializer, so skip it until materializer is ported")]
+        public void A_GraphStageLogic_must_give_a_good_error_message_if_handler_is_missing_when_stage_is_an_island()
+        {
+            Action a = () => Source.Maybe<string>()
+                .Via(new MissingHandlerStage()).Async()
+                .RunWith(Sink.Ignore<string>(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("No handler defined in stage [stage-name] for out port [out");
+        }
+
+        private class MissingHandlerStage : GraphStage<FlowShape<string, string>>
+        {
+            private readonly bool _setInHandler;
+            private readonly Inlet<string> _in;
+
+            private class Logic : GraphStageLogic
+            {
+                public Logic(MissingHandlerStage stage) : base(stage.Shape)
+                {
+                    if(stage._setInHandler)
+                        SetHandler(stage._in, DoNothing);
+                }
+            }
+
+            public MissingHandlerStage(bool setInHandler = true)
+            {
+                _setInHandler = setInHandler;
+                _in = new Inlet<string>("out");
+                Shape = new FlowShape<string, string>(_in, new Outlet<string>("out"));
+            }
+
+            public override FlowShape<string, string> Shape { get; }
+
+            protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
+
+            public override string ToString() => "stage-name";
+        }
     }
 }
