@@ -1013,12 +1013,15 @@ namespace Akka.Streams.Stage
         private void Pull(Inlet inlet)
         {
             var connection = GetConnection(inlet);
+
+            // ensures that the interpreter is available, otherwise the getter will throw.
+            var interpreter = Interpreter;
             var portState = connection.PortState;
 
             if ((portState & (InReady | InClosed | OutClosed)) == InReady)
             {
                 connection.PortState = portState ^ PullStartFlip;
-                Interpreter.ChasePull(connection);
+                interpreter.ChasePull(connection);
             }
             else
             {
@@ -1197,13 +1200,15 @@ namespace Akka.Streams.Stage
         protected internal void Push<T>(Outlet<T> outlet, T element)
         {
             var connection = GetConnection(outlet);
+            // ensures that the interpreter is available, otherwise the getter will throw.
+            var interpreter = Interpreter;
             var portState = connection.PortState;
 
             connection.PortState = portState ^ PushStartFlip;
             if ((portState & (OutReady | OutClosed | InClosed)) == OutReady && element != null)
             {
                 connection.Slot = element;
-                Interpreter.ChasePush(connection);
+                interpreter.ChasePush(connection);
             }
             else
             {

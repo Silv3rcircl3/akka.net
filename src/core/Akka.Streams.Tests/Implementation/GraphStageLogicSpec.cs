@@ -545,5 +545,61 @@ namespace Akka.Streams.Tests.Implementation
             protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes)
                 => new DoubleTerminateLogic(this, _testActor);
         }
+
+        [Fact]
+        public void A_GraphStageLogic_must_not_allow_push_from_constructor()
+        {
+            Action a = () => Source.FromGraph(new ConstructorPushedStage()).RunWith(Sink.Ignore<int>(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("Not yet initialized: only SetHandler is allowed in GraphStageLogic constructor");
+        }
+
+        private class ConstructorPushedStage : GraphStage<SourceShape<int>>
+        {
+            private readonly Outlet<int> _out;
+
+            private class Logic : GraphStageLogic
+            {
+                public Logic(ConstructorPushedStage stage) : base(stage.Shape) => Push(stage._out, 1);
+            }
+
+            public ConstructorPushedStage()
+            {
+                _out = new Outlet<int>("out");
+                Shape = new SourceShape<int>(_out);
+            }
+
+            public override SourceShape<int> Shape { get; }
+
+            protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
+        }
+
+        [Fact]
+        public void A_GraphStageLogic_must_not_allow_pull_from_constructor()
+        {
+            Action a = () => Source.Single(1).RunWith(new ConstructorPulledStage(), Materializer);
+            a.ShouldThrow<IllegalStateException>().Which.Message.Should()
+                .StartWith("Not yet initialized: only SetHandler is allowed in GraphStageLogic constructor");
+        }
+
+        private class ConstructorPulledStage : GraphStage<SinkShape<int>>
+        {
+            private readonly Inlet<int> _in;
+
+            private class Logic : GraphStageLogic
+            {
+                public Logic(ConstructorPulledStage stage) : base(stage.Shape) => Pull(stage._in);
+            }
+
+            public ConstructorPulledStage()
+            {
+                _in = new Inlet<int>("out");
+                Shape = new SinkShape<int>(_in);
+            }
+
+            public override SinkShape<int> Shape { get; }
+
+            protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
+        }
     }
 }
