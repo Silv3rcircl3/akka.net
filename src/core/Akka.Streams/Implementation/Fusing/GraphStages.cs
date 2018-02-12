@@ -832,7 +832,7 @@ namespace Akka.Streams.Implementation.Fusing
                 _stage = stage;
                 _materialized = materialized;
                 _attributes = attributes;
-                _sinkIn = new SubSinkInlet<T>(this, "FutureFlattenSource.in");
+                _sinkIn = new SubSinkInlet<T>(this, "TaskFlattenSource.in");
 
                 // initial handler (until future completes)
                 SetHandler(_stage.Out, onPull: DoNothing, onDownstreamFinish: () =>
@@ -864,8 +864,13 @@ namespace Akka.Streams.Implementation.Fusing
 
             public override void PreStart()
             {
-                var callback = GetAsyncCallback<Task<Source<T, TMat>>>(OnTaskSourceCompleted);
-                _stage.Task.ContinueWith(callback);
+                if (_stage.Task.IsCompleted || _stage.Task.IsCanceled || _stage.Task.IsFaulted)
+                    OnTaskSourceCompleted(_stage.Task);
+                else
+                {
+                    var callback = GetAsyncCallback<Task<Source<T, TMat>>>(OnTaskSourceCompleted);
+                    _stage.Task.ContinueWith(callback);
+                }
             }
 
             public override void OnPush() => Push(_stage.Out, _sinkIn.Grab());
@@ -925,7 +930,7 @@ namespace Akka.Streams.Implementation.Fusing
 
         public Task<Source<T, TMat>> Task { get; }
 
-        public Outlet<T> Out { get; } = new Outlet<T>("FutureFlattenSource.out");
+        public Outlet<T> Out { get; } = new Outlet<T>("TaskFlattenSource.out");
 
         public override SourceShape<T> Shape { get; }
 
@@ -939,7 +944,7 @@ namespace Akka.Streams.Implementation.Fusing
             return new LogicAndMaterializedValue<Task<TMat>>(logic, materialized.Task);
         }
 
-        public override string ToString() => "FutureFlattenSource";
+        public override string ToString() => "TaskFlattenSource";
     }
 
     /// <summary>
@@ -962,7 +967,7 @@ namespace Akka.Streams.Implementation.Fusing
 
             public override void OnPull()
             {
-                var callback = GetAsyncCallback<Task<T>>(t =>
+                void OnTaskCompleted(Task<T> t)
                 {
                     if (!t.IsCanceled && !t.IsFaulted)
                         Emit(_stage.Outlet, t.Result, CompleteStage);
@@ -970,8 +975,15 @@ namespace Akka.Streams.Implementation.Fusing
                         FailStage(t.IsFaulted
                             ? Flatten(t.Exception)
                             : new TaskCanceledException("Task was cancelled."));
-                });
-                _stage._task.ContinueWith(t => callback(t), TaskContinuationOptions.ExecuteSynchronously);
+                }
+
+                if(_stage._task.IsCompleted || _stage._task.IsFaulted || _stage._task.IsCanceled)
+                    OnTaskCompleted(_stage._task);
+                else
+                {
+                    var callback = GetAsyncCallback<Task<T>>(OnTaskCompleted);
+                    _stage._task.ContinueWith(callback, TaskContinuationOptions.ExecuteSynchronously);
+                }
                 SetHandler(_stage.Outlet, EagerTerminateOutput); // After first pull we won't produce anything more
             }
 

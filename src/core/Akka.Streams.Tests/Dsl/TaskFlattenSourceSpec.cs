@@ -28,6 +28,41 @@ namespace Akka.Streams.Tests.Dsl
         private Source<int, string> Underlying { get; } =
             Source.From(new[] { 1, 2, 3 }).MapMaterializedValue(_ => "foo");
 
+
+        [Fact]
+        public void Task_source_must_emit_the_elements_of_the_already_successful_task_source()
+            => this.AssertAllStagesStopped(() =>
+            {
+                var t = Source.FromTaskSource(Task.FromResult(Underlying))
+                    .ToMaterialized(Sink.Seq<int>(), Keep.Both)
+                    .Run(Materializer);
+                var sourceMaterializedValue = t.Item1;
+                var sinkMaterializedValue = t.Item2;
+
+                // should complete as soon as inner source has been materialized
+                sourceMaterializedValue.AwaitResult().Should().Be("foo");
+                sinkMaterializedValue.AwaitResult().Should().BeEquivalentTo(new[] { 1, 2, 3 });
+            }, Materializer);
+
+
+        [Fact]
+        public void Task_source_must_emit_no_elements_before_the_task_of_source_successful()
+            => this.AssertAllStagesStopped(() =>
+            {
+                var c = this.CreateManualSubscriberProbe<int>();
+                var sourceCompletion = new TaskCompletionSource<Source<int, string>>();
+                var p = Source.FromTaskSource(sourceCompletion.Task)
+                    .RunWith(Sink.AsPublisher<int>(true), Materializer);
+                p.Subscribe(c);
+                var sub = c.ExpectSubscription();
+                c.ExpectNoMsg(TimeSpan.FromMilliseconds(100));
+                sub.Request(3);
+                c.ExpectNoMsg(TimeSpan.FromMilliseconds(100));
+                sourceCompletion.SetResult(Underlying);
+                c.ExpectNext(1, 2, 3);
+                c.ExpectComplete();
+            }, Materializer);
+
         [Fact]
         public void Task_source_must_emit_the_elements_of_the_task_source() 
             => this.AssertAllStagesStopped(() =>
@@ -200,5 +235,7 @@ namespace Akka.Streams.Tests.Dsl
 
             public override ILogicAndMaterializedValue<string> CreateLogicAndMaterializedValue(Attributes inheritedAttributes) => throw new TestException("argh, materialization failed");
         }
+
+
     }
 }
