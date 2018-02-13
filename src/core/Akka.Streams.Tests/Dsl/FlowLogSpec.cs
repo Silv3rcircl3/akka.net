@@ -22,7 +22,8 @@ namespace Akka.Streams.Tests.Dsl
     {
         private ActorMaterializer Materializer { get; }
 
-        public FlowLogSpec(ITestOutputHelper helper) : base("akka.loglevel = DEBUG", helper)
+        public FlowLogSpec(ITestOutputHelper helper) : base("akka.loglevel = DEBUG\r\n" +
+                                                            "akka.actor.serialize-messages = off", helper)
         {
             var settings = ActorMaterializerSettings.Create(Sys).WithInputBuffer(2, 16);
             Materializer = ActorMaterializer.Create(Sys, settings);
