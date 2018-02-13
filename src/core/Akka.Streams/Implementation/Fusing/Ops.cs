@@ -3139,9 +3139,10 @@ namespace Akka.Streams.Implementation.Fusing
 
         private sealed class Logic : TimerGraphStageLogic, IInHandler, IOutHandler
         {
+            private const long DelayPrecisionMS = 10;
             private const string TimerName = "DelayedTimer";
             private readonly Delay<T> _stage;
-            private IBuffer<Tuple<long, T>> _buffer; // buffer has pairs timestamp with upstream element
+            private IBuffer<Tuple<double, T>> _buffer; // buffer has pairs timestamp with upstream element
             private readonly int _size;
             private readonly Action _onPushWhenBufferFull;
 
@@ -3177,8 +3178,14 @@ namespace Akka.Streams.Implementation.Fusing
 
             public void OnPull()
             {
-                if (!IsTimerActive(TimerName) && !_buffer.IsEmpty && NextElementWaitTime < 0)
-                    Push(_stage.Outlet, _buffer.Dequeue().Item2);
+                if (!IsTimerActive(TimerName) && !_buffer.IsEmpty)
+                {
+                    var waitTime = NextElementWaitTime;
+                    if (waitTime < 0)
+                        Push(_stage.Outlet, _buffer.Dequeue().Item2);
+                    else
+                        ScheduleOnce(TimerName, TimeSpan.FromMilliseconds(Math.Max(DelayPrecisionMS, waitTime)));
+                }
 
                 if (!IsClosed(_stage.Inlet) && !HasBeenPulled(_stage.Inlet) && PullCondition)
                     Pull(_stage.Inlet);
@@ -3188,9 +3195,17 @@ namespace Akka.Streams.Implementation.Fusing
 
             public void OnDownstreamFinish() => CompleteStage();
 
-            private long NextElementWaitTime => (long)_stage._delay.TotalMilliseconds - (DateTime.UtcNow.Ticks - _buffer.Peek().Item1) * 1000 * 10;
+            private long NextElementWaitTime
+            {
+                get
+                {
+                    var now = TimeSpan.FromTicks(DateTime.UtcNow.Ticks).TotalMilliseconds;
+                    var remaining = now - _buffer.Peek().Item1;
+                    return (long)(_stage._delay.TotalMilliseconds - remaining);
+                }
+            }
 
-            public override void PreStart() => _buffer = Buffer.Create<Tuple<long, T>>(_size, Materializer);
+            public override void PreStart() => _buffer = Buffer.Create<Tuple<double, T>>(_size, Materializer);
 
             private void CompleteIfReady()
             {
@@ -3206,8 +3221,8 @@ namespace Akka.Streams.Implementation.Fusing
                 if (!_buffer.IsEmpty)
                 {
                     var waitTime = NextElementWaitTime;
-                    if (waitTime > 10)
-                        ScheduleOnce(TimerName, new TimeSpan(waitTime));
+                    if (waitTime > DelayPrecisionMS)
+                        ScheduleOnce(TimerName, TimeSpan.FromMilliseconds(waitTime));
                 }
 
                 CompleteIfReady();
@@ -3218,7 +3233,8 @@ namespace Akka.Streams.Implementation.Fusing
 
             private void GrabAndPull()
             {
-                _buffer.Enqueue(new Tuple<long, T>(DateTime.UtcNow.Ticks, Grab(_stage.Inlet)));
+                var now = TimeSpan.FromTicks(DateTime.UtcNow.Ticks).TotalMilliseconds;
+                _buffer.Enqueue(new Tuple<double, T>(now, Grab(_stage.Inlet)));
                 if (PullCondition)
                     Pull(_stage.Inlet);
             }

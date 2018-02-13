@@ -99,6 +99,31 @@ namespace Akka.Streams.Tests.Dsl
         }
 
         [Fact]
+        public void A_Delay_must_deliver_elements_that_arrive_within_the_same_timeout_as_preciding_group_of_elements()
+            => this.AssertAllStagesStopped(() =>
+            {
+                var c = this.CreateManualSubscriberProbe<int>();
+                var p = this.CreateManualPublisherProbe<int>();
+
+                Source.FromPublisher(p).Delay(TimeSpan.FromMilliseconds(300)).To(Sink.FromSubscriber(c))
+                    .Run(Materializer);
+
+                var cSub = c.ExpectSubscription();
+                var pSub = p.ExpectSubscription();
+
+                cSub.Request(100);
+                pSub.SendNext(1);
+                pSub.SendNext(2);
+                c.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+                pSub.SendNext(3);
+                c.ExpectNext(1, 2);
+                c.ExpectNoMsg(TimeSpan.FromMilliseconds(150));
+                c.ExpectNext(3);
+                pSub.SendComplete();
+                c.ExpectComplete();
+            }, Materializer);
+
+        [Fact]
         public void A_Delay_must_drop_tail_for_internal_buffer_if_it_is_full_in_DropTail_mode()
         {
             this.AssertAllStagesStopped(() =>
