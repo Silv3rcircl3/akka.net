@@ -300,6 +300,10 @@ namespace Akka.Streams.Implementation.Stages
         /// <summary>
         /// TBD
         /// </summary>
+        public static readonly Attributes TaskFlattenSource = Attributes.CreateName("taskFlattenSource");
+        /// <summary>
+        /// TBD
+        /// </summary>
         public static readonly Attributes TickSource = Attributes.CreateName("tickSource");
         /// <summary>
         /// TBD

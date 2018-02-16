@@ -849,10 +849,12 @@ namespace Akka.Streams.Implementation.Fusing
                             else if (t.IsFaulted)
                                 _materialized.TrySetException(t.Exception);
                             else
-                            {
-                                var runnable = Source.FromGraph(t.Result).To(Sink.Ignore<T>());
-                                var materializedValue =
-                                    Interpreter.SubFusingMaterializer.Materialize(runnable, _attributes);
+                            { 
+                                // downstream finish means it cancelled, so we push that signal through into the future materialized source
+                                var materializedValue = Source.FromGraph(t.Result)
+                                    .WithAttributes(attributes)
+                                    .To(Sink.Cancelled<T>())
+                                    .Run(Interpreter.SubFusingMaterializer);
                                 _materialized.TrySetResult(materializedValue);
                             }
                         });
@@ -920,11 +922,11 @@ namespace Akka.Streams.Implementation.Fusing
             }
         }
 
-        public TaskFlattenSource(Task<Source<T, TMat>> task)
+        public TaskFlattenSource(Task<Source<T, TMat>> taskSource)
         {
-            ReactiveStreamsCompliance.RequireNonNullElement(task);
+            ReactiveStreamsCompliance.RequireNonNullElement(taskSource);
 
-            Task = task;
+            Task = taskSource;
             Shape = new SourceShape<T>(Out);
         }
 
@@ -934,7 +936,7 @@ namespace Akka.Streams.Implementation.Fusing
 
         public override SourceShape<T> Shape { get; }
 
-        protected override Attributes InitialAttributes { get; } = DefaultAttributes.TaskSource;
+        protected override Attributes InitialAttributes { get; } = DefaultAttributes.TaskFlattenSource;
 
         public override ILogicAndMaterializedValue<Task<TMat>> CreateLogicAndMaterializedValue(Attributes inheritedAttributes)
         {

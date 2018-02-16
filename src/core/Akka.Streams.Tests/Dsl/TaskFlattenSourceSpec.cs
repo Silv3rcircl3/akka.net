@@ -205,15 +205,40 @@ namespace Akka.Streams.Tests.Dsl
                 subscriber.ExpectComplete();
             }, Materializer);
 
-        
-        [Fact(Skip = "Behaviour when inner source throws during materialization is undefined (leaks ActorGraphInterpreters)" +
-                     "until Akka ticket #22358 has been fixed, this test fails because of it")]
+
+        [Fact]
+        public void Task_source_must_carry_through_cancellation_to_later_materialized_source()
+            => this.AssertAllStagesStopped(() =>
+            {
+                var subscriber = this.CreateSubscriberProbe<int>();
+                var publisher = this.CreatePublisherProbe<int>();
+
+                var sourceCompletion = new TaskCompletionSource<Source<int, string>>();
+
+                var materializedValue = Source.FromTaskSource(sourceCompletion.Task)
+                    .To(Sink.FromSubscriber(subscriber))
+                    .Run(Materializer);
+
+                subscriber.EnsureSubscription();
+
+                sourceCompletion.SetResult(Source.FromPublisher(publisher).MapMaterializedValue(_ => "woho"));
+
+                // materialized value completes but still no demand
+                materializedValue.Result.Should().Be("woho");
+
+                // cancelling the outer source should carry through to the internal one
+                subscriber.EnsureSubscription();
+                subscriber.Cancel();
+                publisher.ExpectCancellation();
+            }, Materializer);
+
+        [Fact]
         public void Task_source_must_fail_when_the_task_source_materialization_fails()
             => this.AssertAllStagesStopped(() =>
             {
-                var failure = new TestException("MatEx");
+                var inner = Task.FromResult(Source.FromGraph(new FailingMaterializationStage()));
 
-                var t = Source.FromTaskSource(Task.FromResult(Source.FromGraph(new FailingMaterializationStage())))
+                var t = Source.FromTaskSource(inner)
                     .ToMaterialized(Sink.Seq<int>(), Keep.Both)
                     .Run(Materializer);
 
@@ -221,9 +246,9 @@ namespace Akka.Streams.Tests.Dsl
                 var sinkMaterializedValue = t.Item2;
 
                 Action a = () => sourceMaterializedValue.Wait(TimeSpan.FromSeconds(3));
-                a.ShouldThrow<TestException>().WithMessage("MatEx");
+                a.ShouldThrow<TestException>().WithMessage("INNER_FAILED");
                 a = () => sinkMaterializedValue.Wait(TimeSpan.FromSeconds(3));
-                a.ShouldThrow<TestException>().WithMessage("MatEx");
+                a.ShouldThrow<TestException>().WithMessage("INNER_FAILED");
             }, Materializer);
 
 
@@ -233,9 +258,7 @@ namespace Akka.Streams.Tests.Dsl
 
             public override SourceShape<int> Shape { get; }
 
-            public override ILogicAndMaterializedValue<string> CreateLogicAndMaterializedValue(Attributes inheritedAttributes) => throw new TestException("argh, materialization failed");
+            public override ILogicAndMaterializedValue<string> CreateLogicAndMaterializedValue(Attributes inheritedAttributes) => throw new TestException("INNER_FAILED");
         }
-
-
     }
 }
