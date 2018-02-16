@@ -12,7 +12,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Akka.Actor;
-using Akka.Actor.Dsl;
+using Akka.Configuration;
 using Akka.IO;
 using Akka.Pattern;
 using Akka.Streams.Dsl;
@@ -639,39 +639,86 @@ namespace Akka.Streams.Tests.IO
             });
         }
 
-        [Fact(Skip = "FIXME: unexpected ErrorClosed")]
+        [Fact (Skip = "FIXME: unexpected ErrorClosed")]
         public void Tcp_listen_stream_must_not_shut_down_connections_after_the_connection_stream_cancelled()
         {
             this.AssertAllStagesStopped(() =>
             {
-                var thousandByteStrings = Enumerable.Range(0, 1000)
-                    .Select(_ => ByteString.FromBytes(new byte[] { 0 }))
-                    .ToArray();
+                // configure a few timeouts we do not want to hit
+                var config = ConfigurationFactory.ParseString("akka.actor.serializer-messages = off\r\n" +
+                                                              "akka.io.tcp.register-timeout = 42s");
+                var timeoutSettings = new StreamSubscriptionTimeoutSettings(StreamSubscriptionTimeoutTerminationMode.CancelTermination, TimeSpan.FromSeconds(42));
 
-                var serverAddress = TestUtils.TemporaryServerAddress();
-                var t = Sys.TcpStream()
-                    .Bind(serverAddress.Address.ToString(), serverAddress.Port)
-                    .Take(1)
-                    .ToMaterialized(Sink.ForEach<Tcp.IncomingConnection>(tcp =>
+                var serverSystem = ActorSystem.Create("server", config);
+                var serverSettings = ActorMaterializerSettings.Create(serverSystem).WithSubscriptionTimeoutSettings(timeoutSettings);
+                var serverMaterializer = ActorMaterializer.Create(serverSystem, serverSettings);
+
+                var clientSystem = ActorSystem.Create("client", config);
+                var clientSettings = ActorMaterializerSettings.Create(clientSystem).WithSubscriptionTimeoutSettings(timeoutSettings);
+                var clientMaterializer = ActorMaterializer.Create(clientSystem, clientSettings);
+
+                try
+                {
+                    var address = TestUtils.TemporaryServerAddress();
+                    var completRequest = CreateTestLatch();
+                    var serverGotRequest = new TaskCompletionSource<int>();
+
+                    bool PortClosed()
                     {
-                        Thread.Sleep(1000); // we're testing here to see if it survives such race
-                        tcp.Flow.Join(Flow.Create<ByteString>()).Run(Materializer);
-                    }), Keep.Both)
-                    .Run(Materializer);
+                        try
+                        {
+                            using (var socket = new Socket(SocketType.Stream, ProtocolType.Tcp))
+                            {
+                                socket.Connect(address);
+                                serverSystem.Log.Info("port open");
+                            }
+                            return false;
+                        }
+                        catch (Exception)
+                        {
+                            return true;
+                        }
+                    }
 
-                var bindingTask = t.Item1;
+                    var futureBinding = serverSystem.TcpStream().Bind(address.Address.ToString(), address.Port)
+                        // accept one connection, then cancel
+                        .Take(1)
+                        .Select(connection =>
+                        {
+                            serverGotRequest.SetResult(0);
+                            return Task.Run(() =>
+                            {
+                                // wait for the port close below
+                                completRequest.Ready(RemainingOrDefault);
+                                // when the server has closed the port and stopped accepting incoming
+                                // connections, complete the one accepted connection
+                                connection.Flow.Join(Flow.Create<ByteString>()).Run(serverMaterializer);
+                            });
+                        })
+                        .To(Sink.Ignore<Task>())
+                        .Run(serverMaterializer);
 
-                // make sure server is running first
-                bindingTask.Wait(TimeSpan.FromSeconds(3)).Should().BeTrue();
-                var result = bindingTask.Result;
+                    // make sure server is running first
+                    futureBinding.Wait();
 
-                // then connect, should trigger a block and then
-                var total = Source.From(thousandByteStrings)
-                    .Via(Sys.TcpStream().OutgoingConnection(serverAddress))
-                    .RunAggregate(0, (i, s) => i + s.Count, Materializer);
+                    // then connect once, which should lead to the server cancelling
+                    var source = Source
+                        .From(Enumerable.Range(0, 100).Select(_ => ByteString.FromBytes(new byte[] { 0 })))
+                        .Via(Sys.TcpStream().OutgoingConnection(address))
+                        .RunAggregate(0, (i, s) => i + s.Count, clientMaterializer);
 
-                total.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
-                total.Result.Should().Be(1000);
+                    serverGotRequest.Task.Wait();
+                    // this can take a bit of time worst case but is often swift
+                    AwaitCondition(PortClosed);
+                    completRequest.Open();
+
+                    source.Result.Should().Be(100);
+                }
+                finally
+                {
+                    Shutdown(serverSystem);
+                    Shutdown(clientSystem);
+                }
             }, Materializer);
         }
 
