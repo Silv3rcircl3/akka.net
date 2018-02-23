@@ -7,6 +7,7 @@
 
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -133,6 +134,7 @@ namespace Akka.Streams.Implementation.Fusing
             /// TBD
             /// </summary>
             public readonly Exception Reason;
+
             /// <summary>
             /// TBD
             /// </summary>
@@ -220,27 +222,27 @@ namespace Akka.Streams.Implementation.Fusing
             /// <summary>
             /// TBD
             /// </summary>
-            public int Id { get; }
+            public int Id { get; set; }
 
             /// <summary>
             /// TBD
             /// </summary>
-            public int InOwnerId { get; }
+            public int InOwnerId { get; set; }
 
             /// <summary>
             /// TBD
             /// </summary>
-            public GraphStageLogic InOwner { get; }
+            public GraphStageLogic InOwner { get; set; }
 
             /// <summary>
             /// TBD
             /// </summary>
-            public int OutOwnerId { get; }
+            public int OutOwnerId { get; set; }
 
             /// <summary>
             /// TBD
             /// </summary>
-            public GraphStageLogic OutOwner { get; }
+            public GraphStageLogic OutOwner { get; set; }
 
             /// <summary>
             /// TBD
@@ -280,6 +282,7 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         public const Connection NoEvent = null;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -289,14 +292,17 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         public const int InReady = 1;
+
         /// <summary>
         /// TBD
         /// </summary>
         public const int Pulling = 1 << 1;
+
         /// <summary>
         /// TBD
         /// </summary>
         public const int Pushing = 1 << 2;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -306,10 +312,12 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         public const int InClosed = 1 << 4;
+
         /// <summary>
         /// TBD
         /// </summary>
         public const int OutClosed = 1 << 5;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -319,14 +327,17 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         public const int PullStartFlip = InReady | Pulling;
+
         /// <summary>
         /// TBD
         /// </summary>
         public const int PullEndFlip = Pulling | OutReady;
+
         /// <summary>
         /// TBD
         /// </summary>
         public const int PushStartFlip = Pushing | OutReady;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -336,6 +347,7 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         public const int KeepGoingFlag = 0x4000000;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -344,7 +356,8 @@ namespace Akka.Streams.Implementation.Fusing
         // Using an Object-array avoids holding on to the GraphInterpreter class
         // when this accidentally leaks onto threads that are not stopped when this
         // class should be unloaded.
-        private static readonly ThreadLocal<object[]> CurrentInterpreter = new ThreadLocal<object[]>(() => new object[1]);
+        private static readonly ThreadLocal<object[]> CurrentInterpreter =
+            new ThreadLocal<object[]>(() => new object[1]);
 
         /// <summary>
         /// TBD
@@ -356,44 +369,45 @@ namespace Akka.Streams.Implementation.Fusing
             {
                 if (CurrentInterpreter.Value[0] == null)
                     throw new InvalidOperationException("Something went terribly wrong!");
-                return (GraphInterpreter) CurrentInterpreter.Value[0];
+                return (GraphInterpreter)CurrentInterpreter.Value[0];
             }
         }
 
         /// <summary>
         /// TBD
         /// </summary>
-        public static GraphInterpreter CurrentInterpreterOrNull => (GraphInterpreter) CurrentInterpreter.Value[0];
+        public static GraphInterpreter CurrentInterpreterOrNull => (GraphInterpreter)CurrentInterpreter.Value[0];
 
         /// <summary>
         /// TBD
         /// </summary>
-        public static readonly Attributes[] SingleNoAttribute = {Attributes.None};
+        public static readonly Attributes[] SingleNoAttribute = { Attributes.None };
 
         /// <summary>
         /// TBD
         /// </summary>
         public readonly GraphStageLogic[] Logics;
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public readonly GraphAssembly Assembly;
+
         /// <summary>
         /// TBD
         /// </summary>
         public readonly IMaterializer Materializer;
+
         /// <summary>
         /// TBD
         /// </summary>
         public readonly ILoggingAdapter Log;
+
         /// <summary>
         /// TBD
         /// </summary>
         public readonly Connection[] Connections;
+
         /// <summary>
         /// TBD
         /// </summary>
         public readonly Action<GraphStageLogic, object, Action<object>> OnAsyncInput;
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -436,17 +450,15 @@ namespace Akka.Streams.Implementation.Fusing
         /// <param name="fuzzingMode">TBD</param>
         /// <param name="context">TBD</param>
         public GraphInterpreter(
-                    GraphAssembly assembly,
-                    IMaterializer materializer,
-                    ILoggingAdapter log,
-                    GraphStageLogic[] logics,
-                    Connection[] connections,
-                    Action<GraphStageLogic, object, Action<object>> onAsyncInput,
-                    bool fuzzingMode,
-                    IActorRef context)
+            IMaterializer materializer,
+            ILoggingAdapter log,
+            GraphStageLogic[] logics,
+            Connection[] connections,
+            Action<GraphStageLogic, object, Action<object>> onAsyncInput,
+            bool fuzzingMode,
+            IActorRef context)
         {
             Logics = logics;
-            Assembly = assembly;
             Materializer = materializer;
             Log = log;
             Connections = connections;
@@ -454,16 +466,13 @@ namespace Akka.Streams.Implementation.Fusing
             FuzzingMode = fuzzingMode;
             Context = context;
 
-            RunningStagesCount = Assembly.Stages.Length;
+            RunningStagesCount = Logics.Length;
 
-            _shutdownCounter = new int[assembly.Stages.Length];
+            _shutdownCounter = new int[Logics.Length];
             for (var i = 0; i < _shutdownCounter.Length; i++)
-            {
-                var shape = assembly.Stages[i].Shape;
-                _shutdownCounter[i] = shape.Inlets.Count() + shape.Outlets.Count();
-            }
+                _shutdownCounter[i] = Logics[i].Handlers.Length;
 
-            _eventQueue = new Connection[1 << (32 - (assembly.ConnectionCount - 1).NumberOfLeadingZeros())];
+            _eventQueue = new Connection[1 << (32 - (Connections.Length - 1).NumberOfLeadingZeros())];
             _mask = _eventQueue.Length - 1;
         }
 
@@ -486,52 +495,11 @@ namespace Akka.Streams.Implementation.Fusing
         }
 
         private string _name;
+
         /// <summary>
         /// TBD
         /// </summary>
         internal string Name => _name ?? (_name = GetHashCode().ToString("x"));
-
-        /// <summary>
-        /// Assign the boundary logic to a given connection. This will serve as the interface to the external world
-        /// (outside the interpreter) to process and inject events.
-        /// </summary>
-        /// <param name="connection">TBD</param>
-        /// <param name="logic">TBD</param>
-        public void AttachUpstreamBoundary(Connection connection, UpstreamBoundaryStageLogic logic)
-        {
-            logic.PortToConn[logic.Out.Id + logic.InCount] = connection;
-            logic.Interpreter = this;
-            connection.OutHandler = (IOutHandler) logic.Handlers[0];
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="connection">TBD</param>
-        /// <param name="logic">TBD</param>
-        public void AttachUpstreamBoundary(int connection, UpstreamBoundaryStageLogic logic)
-            => AttachUpstreamBoundary(Connections[connection], logic);
-
-        /// <summary>
-        /// Assign the boundary logic to a given connection. This will serve as the interface to the external world
-        /// (outside the interpreter) to process and inject events.
-        /// </summary>
-        /// <param name="connection">TBD</param>
-        /// <param name="logic">TBD</param>
-        public void AttachDownstreamBoundary(Connection connection, DownstreamBoundaryStageLogic logic)
-        {
-            logic.PortToConn[logic.In.Id] = connection;
-            logic.Interpreter = this;
-            connection.InHandler = (IInHandler) logic.Handlers[0];
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="connection">TBD</param>
-        /// <param name="logic">TBD</param>
-        public void AttachDownstreamBoundary(int connection, DownstreamBoundaryStageLogic logic)
-            => AttachDownstreamBoundary(Connections[connection], logic);
 
         /// <summary>
         /// Dynamic handler changes are communicated from a GraphStageLogic by this method.
@@ -579,7 +547,6 @@ namespace Akka.Streams.Implementation.Fusing
             for (var i = 0; i < Logics.Length; i++)
             {
                 var logic = Logics[i];
-                logic.StageId = i;
                 logic.Interpreter = this;
                 try
                 {
@@ -588,10 +555,11 @@ namespace Akka.Streams.Implementation.Fusing
                 }
                 catch (Exception e)
                 {
-                    if (Log.IsErrorEnabled)
-                        Log.Error(e, $"Error during PreStart in [{Assembly.Stages[logic.StageId]}]");
+                    //if (Log.IsErrorEnabled)
+                    //  Log.Error(e, $"Error during PreStart in [{Assembly.Stages[logic.StageId]}]");
                     logic.FailStage(e);
                 }
+
                 AfterStageHasRun(logic);
             }
         }
@@ -602,36 +570,21 @@ namespace Akka.Streams.Implementation.Fusing
         public void Finish()
         {
             foreach (var logic in Logics)
-                if (!IsStageCompleted(logic)) FinalizeStage(logic);
+                if (!IsStageCompleted(logic))
+                    FinalizeStage(logic);
         }
 
         // Debug name for a connections input part
-        private string InOwnerName(Connection connection)
-        {
-            var owner = Assembly.InletOwners[connection.Id];
-            return owner == Boundary ? "DownstreamBoundary" : Assembly.Stages[owner].ToString();
-        }
+        private string InOwnerName(Connection connection) => connection.InOwner.ToString();
 
         // Debug name for a connections output part
-        private string OutOwnerName(Connection connection)
-        {
-            var owner = Assembly.OutletOwners[connection.Id];
-            return owner == Boundary ? "UpstreamBoundary" : Assembly.Stages[owner].ToString();
-        }
+        private string OutOwnerName(Connection connection) => connection.OutOwner.ToString();
 
         // Debug name for a connections input part
-        private string InLogicName(Connection connection)
-        {
-            var owner = Assembly.InletOwners[connection.Id];
-            return owner == Boundary ? "DownstreamBoundary" : Logics[owner].ToString();
-        }
+        private string InLogicName(Connection connection) => Logics[connection.InOwnerId].ToString();
 
         // Debug name for a connections output part
-        private string OutLogicName(Connection connection)
-        {
-            var owner = Assembly.OutletOwners[connection.Id];
-            return owner == Boundary ? "UpstreamBoundary" : Logics[owner].ToString();
-        }
+        private string OutLogicName(Connection connection) => Logics[connection.OutOwnerId].ToString();
 
         private string ShutdownCounters() => string.Join(",",
             _shutdownCounter.Select(x => x >= KeepGoingFlag ? $"{x & KeepGoingMask}(KeepGoing)" : x.ToString()));
@@ -745,7 +698,10 @@ namespace Akka.Streams.Implementation.Fusing
             {
                 currentInterpreterHolder[0] = previousInterpreter;
             }
-            if (IsDebug) Console.WriteLine($"{Name} ---------------- {QueueStatus()} (running={RunningStagesCount}, shutdown={ShutdownCounters()})");
+
+            if (IsDebug)
+                Console.WriteLine(
+                    $"{Name} ---------------- {QueueStatus()} (running={RunningStagesCount}, shutdown={ShutdownCounters()})");
             // TODO: deadlock detection
             return eventsRemaining;
         }
@@ -755,9 +711,10 @@ namespace Akka.Streams.Implementation.Fusing
             if (ActiveStage == null)
                 throw e;
 
-            var stage = Assembly.Stages[ActiveStage.StageId];
+            // TODO: Get error reporting back
+            //var stage = Assembly.Stages[ActiveStage.StageId];
             if (Log.IsErrorEnabled)
-                Log.Error(e, $"Error in stage [{stage}]: {e.Message}");
+                Log.Error(e, $"Error in stage [{ActiveStage}]: {e.Message}");
 
             ActiveStage.FailStage(e);
 
@@ -768,7 +725,7 @@ namespace Akka.Streams.Implementation.Fusing
                 Enqueue(_chasedPush);
                 _chasedPush = NoEvent;
             }
-            
+
             if (_chasedPull != NoEvent)
             {
                 Enqueue(_chasedPull);
@@ -803,6 +760,7 @@ namespace Akka.Streams.Implementation.Fusing
                     {
                         logic.FailStage(e);
                     }
+
                     AfterStageHasRun(logic);
                 }
                 finally
@@ -837,7 +795,9 @@ namespace Akka.Streams.Implementation.Fusing
             {
                 // CANCEL
                 ActiveStage = connection.OutOwner;
-                if (IsDebug) Console.WriteLine($"{Name} CANCEL {InOwnerName(connection)} -> {OutOwnerName(connection)} ({connection.OutHandler}) [{OutLogicName(connection)}]");
+                if (IsDebug)
+                    Console.WriteLine(
+                        $"{Name} CANCEL {InOwnerName(connection)} -> {OutOwnerName(connection)} ({connection.OutHandler}) [{OutLogicName(connection)}]");
                 connection.PortState |= OutClosed;
                 CompleteConnection(connection.OutOwnerId);
                 connection.OutHandler.OnDownstreamFinish();
@@ -848,7 +808,9 @@ namespace Akka.Streams.Implementation.Fusing
                 if ((code & Pushing) == 0)
                 {
                     // Normal completion (no push pending)
-                    if (IsDebug) Console.WriteLine($"{Name} COMPLETE {OutOwnerName(connection)} -> {InOwnerName(connection)} ({connection.InHandler}) [{InLogicName(connection)}]");
+                    if (IsDebug)
+                        Console.WriteLine(
+                            $"{Name} COMPLETE {OutOwnerName(connection)} -> {InOwnerName(connection)} ({connection.InHandler}) [{InLogicName(connection)}]");
                     connection.PortState |= InClosed;
                     ActiveStage = connection.InOwner;
                     CompleteConnection(connection.InOwnerId);
@@ -866,7 +828,7 @@ namespace Akka.Streams.Implementation.Fusing
                 }
             }
         }
-        
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ProcessPush(Connection connection)
         {
@@ -895,6 +857,7 @@ namespace Akka.Streams.Implementation.Fusing
                 _eventQueue[swapWith] = _eventQueue[idx];
                 _eventQueue[idx] = ev;
             }
+
             var element = _eventQueue[idx];
             _eventQueue[idx] = NoEvent;
             _queueHead++;
@@ -909,7 +872,8 @@ namespace Akka.Streams.Implementation.Fusing
         /// <returns>TBD</returns>
         public void Enqueue(Connection connection)
         {
-            if (IsDebug && _queueTail - _queueHead > _mask) throw new Exception($"{Name} internal queue full ({QueueStatus()}) + {connection}");
+            if (IsDebug && _queueTail - _queueHead > _mask)
+                throw new Exception($"{Name} internal queue full ({QueueStatus()}) + {connection}");
             _eventQueue[_queueTail & _mask] = connection;
             _queueTail++;
         }
@@ -939,12 +903,9 @@ namespace Akka.Streams.Implementation.Fusing
         /// </summary>
         private void CompleteConnection(int stageId)
         {
-            if (stageId != Boundary)
-            {
-                var activeConnections = _shutdownCounter[stageId];
-                if (activeConnections > 0)
-                    _shutdownCounter[stageId] = activeConnections - 1;
-            }
+            var activeConnections = _shutdownCounter[stageId];
+            if (activeConnections > 0)
+                _shutdownCounter[stageId] = activeConnections - 1;
         }
 
         /// <summary>
@@ -969,8 +930,8 @@ namespace Akka.Streams.Implementation.Fusing
             }
             catch (Exception err)
             {
-                if (Log.IsErrorEnabled)
-                    Log.Error(err, "Error during PostStop in [{0}]", Assembly.Stages[logic.StageId]);
+                //if (Log.IsErrorEnabled)
+                //    Log.Error(err, "Error during PostStop in [{0}]", Assembly.Stages[logic.StageId]);
             }
         }
 
@@ -1020,10 +981,10 @@ namespace Akka.Streams.Implementation.Fusing
                 _chasedPush = NoEvent;
                 Enqueue(connection);
             }
-            else if ((currentState & (InClosed |Pushing |Pulling|OutClosed)) == 0)
+            else if ((currentState & (InClosed | Pushing | Pulling | OutClosed)) == 0)
                 Enqueue(connection);
 
-            if((currentState & OutClosed) == 0)
+            if ((currentState & OutClosed) == 0)
                 CompleteConnection(connection.OutOwnerId);
         }
 
@@ -1095,31 +1056,32 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public override string ToString()
-        {
-            var builder = new StringBuilder("digraph waits {\n");
+        //public override string ToString()
+        //{
+        //    var builder = new StringBuilder("digraph waits {\n");
 
-            for (var i = 0; i < Assembly.Stages.Length; i++)
-                builder.AppendLine($"N{i} [label={Assembly.Stages[i]}]");
+        //    for (var i = 0; i < Assembly.Stages.Length; i++)
+        //        builder.AppendLine($"N{i} [label={Assembly.Stages[i]}]");
 
-            for (var i = 0; i < Connections.Length; i++)
-            {
-                var state = Connections[i].PortState;
-                if (state == InReady)
-                    builder.Append($"  {NameIn(i)} -> {NameOut(i)} [label=shouldPull; color=blue];");
-                else if (state == OutReady)
-                    builder.Append($"  {NameOut(i)} -> {NameIn(i)} [label=shouldPush; color=red];");
-                else if( (state | InClosed | OutClosed) == (InClosed | OutClosed))
-                    builder.Append($"  {NameIn(i)} -> {NameOut(i)} [style=dotted; label=closed dir=both];");
-            }
+        //    for (var i = 0; i < Connections.Length; i++)
+        //    {
+        //        var state = Connections[i].PortState;
+        //        if (state == InReady)
+        //            builder.Append($"  {NameIn(i)} -> {NameOut(i)} [label=shouldPull; color=blue];");
+        //        else if (state == OutReady)
+        //            builder.Append($"  {NameOut(i)} -> {NameIn(i)} [label=shouldPush; color=red];");
+        //        else if( (state | InClosed | OutClosed) == (InClosed | OutClosed))
+        //            builder.Append($"  {NameIn(i)} -> {NameOut(i)} [style=dotted; label=closed dir=both];");
+        //    }
 
-            builder.AppendLine();
-            builder.AppendLine("}");
-            builder.Append($"// {QueueStatus()} (running={RunningStagesCount}, shutdown={ShutdownCounters()}");
-            return builder.ToString();
-        }
+        //    builder.AppendLine();
+        //    builder.AppendLine("}");
+        //    builder.Append($"// {QueueStatus()} (running={RunningStagesCount}, shutdown={ShutdownCounters()}");
+        //    return builder.ToString();
+        //}
 
-        private string NameIn(int port) => Assembly.InletOwners[port] == Boundary ? "Out" + port : "N" + port;
+        //private string NameIn(int port) => Assembly.InletOwners[port] == Boundary ? "Out" + port : "N" + port;
 
-        private string NameOut(int port) => Assembly.OutletOwners[port] == Boundary ? "Out" + port : "N" + port;}
+        //private string NameOut(int port) => Assembly.OutletOwners[port] == Boundary ? "Out" + port : "N" + port;}
+    }
 }

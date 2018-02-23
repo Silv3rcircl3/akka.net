@@ -38,23 +38,17 @@ namespace Akka.Streams.Implementation
     /// <typeparam name="TOut">TBD</typeparam>
     /// <typeparam name="TMat">TBD</typeparam>
     [InternalApi]
-    public abstract class SourceModule<TOut, TMat> : AtomicModule, ISourceModule
+    public abstract class SourceModule<TOut, TMat> : IAtomicModule<SourceShape<TOut>>, ISourceModule
     {
-        private readonly SourceShape<TOut> _shape;
-
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="shape">TBD</param>
         protected SourceModule(SourceShape<TOut> shape)
         {
-            _shape = shape;
+            Shape = shape;
+            Builder = LinearTraversalBuilder.FromModule(this, Attributes).MakeIsland(IslandTag.SourceModul);
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Shape Shape => _shape;
 
         /// <summary>
         /// TBD
@@ -81,7 +75,10 @@ namespace Akka.Streams.Implementation
         /// <param name="context">TBD</param>
         /// <param name="materializer">TBD</param>
         /// <returns>TBD</returns>
+        // TODO: Remove this, no longer needed?
         public abstract IPublisher<TOut> Create(MaterializationContext context, out TMat materializer);
+
+        Shape ISourceModule.Shape => Shape;
 
         IUntypedPublisher ISourceModule.Create(MaterializationContext context, out object materializer)
         {
@@ -91,42 +88,27 @@ namespace Akka.Streams.Implementation
             return UntypedPublisher.FromTyped(result);
         }
 
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="shape">TBD</param>
-        /// <exception cref="NotSupportedException">TBD</exception>
-        /// <returns>TBD</returns>
-        public override IModule ReplaceShape(Shape shape)
-        {
-            if (Equals(shape, Shape))
-                return this;
-
-            throw new NotSupportedException("cannot replace the shape of a Source, you need to wrap it in a Graph for that");
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override IModule CarbonCopy()
-            => NewInstance(new SourceShape<TOut>(Outlet.Create<TOut>(_shape.Outlet.CarbonCopy())));
-
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
+        /// // TODO: Amendshape changed the name of ports. Is it needed anymore?
         protected SourceShape<TOut> AmendShape(Attributes attributes)
         {
-            var thisN = Attributes.GetNameOrDefault(null);
+            var thisN = Builder.Attributes.GetNameOrDefault(null);
             var thatN = attributes.GetNameOrDefault(null);
 
             return thatN == null || thatN == thisN
-                ? _shape
+                ? Shape
                 : new SourceShape<TOut>(new Outlet<TOut>(thatN + ".out"));
         }
+
+        public SourceShape<TOut> Shape { get; }
+
+        public Attributes Attributes { get; protected set; }
+
+        public ITraversalBuilder Builder { get; } 
     }
 
     /// <summary>
@@ -146,20 +128,7 @@ namespace Akka.Streams.Implementation
         {
             Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new SubscriberSource<TOut>(attributes, AmendShape(attributes));
-
+        
         /// <summary>
         /// TBD
         /// </summary>
@@ -211,20 +180,7 @@ namespace Akka.Streams.Implementation
         /// <summary>
         /// TBD
         /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         protected override string Label { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new PublisherSource<TOut>(_publisher, attributes, AmendShape(attributes));
 
         /// <summary>
         /// TBD
@@ -263,19 +219,6 @@ namespace Akka.Streams.Implementation
         {
             Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new MaybeSource<TOut>(attributes, AmendShape(attributes));
 
         /// <summary>
         /// TBD
@@ -319,19 +262,6 @@ namespace Akka.Streams.Implementation
             _props = props;
             Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new ActorPublisherSource<TOut>(_props, attributes, AmendShape(attributes));
 
         /// <summary>
         /// TBD
@@ -384,20 +314,7 @@ namespace Akka.Streams.Implementation
         /// <summary>
         /// TBD
         /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         protected override string Label { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes) 
-            => new ActorRefSource<TOut>(_bufferSize, _overflowStrategy, attributes, AmendShape(attributes));
 
         /// <summary>
         /// TBD

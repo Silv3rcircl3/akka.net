@@ -369,16 +369,12 @@ namespace Akka.Streams
         /// Compute a name by concatenating all Name attributes that the given module
         /// has, returning the given default value if none are found.
         /// </summary>
-        /// <param name="module">TBD</param>
+        /// <param name="builder">TBD</param>
         /// <param name="defaultIfNotFound">TBD</param>
         /// <returns>TBD</returns>
-        public static string ExtractName(IModule module, string defaultIfNotFound)
+        public static string ExtractName(ITraversalBuilder builder, string defaultIfNotFound)
         {
-            var copy = module as CopiedModule;
-
-            return copy != null
-                ? copy.Attributes.And(copy.CopyOf.Attributes).GetNameOrDefault(defaultIfNotFound)
-                : module.Attributes.GetNameOrDefault(defaultIfNotFound);
+            return builder.Attributes.GetNameOrDefault(defaultIfNotFound);
         }
 
         /// <inheritdoc/>

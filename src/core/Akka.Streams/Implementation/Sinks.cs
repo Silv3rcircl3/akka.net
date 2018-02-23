@@ -45,23 +45,19 @@ namespace Akka.Streams.Implementation
     /// <typeparam name="TIn">TBD</typeparam>
     /// <typeparam name="TMat">TBD</typeparam>
     [InternalApi]
-    public abstract class SinkModule<TIn, TMat> : AtomicModule, ISinkModule
+    public abstract class SinkModule<TIn, TMat> : IAtomicModule<SinkShape<TIn>>, ISinkModule
     {
-        private readonly SinkShape<TIn> _shape;
-
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="shape">TBD</param>
         protected SinkModule(SinkShape<TIn> shape)
         {
-            _shape = shape;
+            Shape = shape;
+            Builder = LinearTraversalBuilder.FromModule(this).MakeIsland(IslandTag.SinkModule);
         }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Shape Shape => _shape;
+        public Attributes Attributes { get; protected set; }
 
         /// <summary>
         /// TBD
@@ -93,6 +89,8 @@ namespace Akka.Streams.Implementation
         /// <returns>TBD</returns>
         public abstract object Create(MaterializationContext context, out TMat materializer);
 
+        Shape ISinkModule.Shape => Shape;
+
         object ISinkModule.Create(MaterializationContext context, out object materializer)
         {
             TMat m;
@@ -104,39 +102,21 @@ namespace Akka.Streams.Implementation
         /// <summary>
         /// TBD
         /// </summary>
-        /// <param name="shape">TBD</param>
-        /// <exception cref="NotSupportedException">TBD</exception>
-        /// <returns>TBD</returns>
-        public override IModule ReplaceShape(Shape shape)
-        {
-            if (Equals(_shape, shape))
-                return this;
-
-            throw new NotSupportedException(
-                "cannot replace the shape of a Sink, you need to wrap it in a Graph for that");
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override IModule CarbonCopy()
-            => NewInstance(new SinkShape<TIn>(Inlet.Create<TIn>(_shape.Inlet.CarbonCopy())));
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         /// <param name="attrs">TBD</param>
         /// <returns>TBD</returns>
         protected SinkShape<TIn> AmendShape(Attributes attrs)
         {
-            var thisN = Attributes.GetNameOrDefault(null);
+            var thisN = Builder.Attributes.GetNameOrDefault(null);
             var thatN = attrs.GetNameOrDefault(null);
 
-            return (thatN == null) || thisN == thatN
-                ? _shape
+            return thatN == null || thisN == thatN
+                ? Shape
                 : new SinkShape<TIn>(new Inlet<TIn>(thatN + ".in"));
         }
+
+        public SinkShape<TIn> Shape { get; }
+
+        public ITraversalBuilder Builder { get; }
     }
 
     /// <summary>
@@ -161,20 +141,7 @@ namespace Akka.Streams.Implementation
         {
             Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new PublisherSink<TIn>(attributes, AmendShape(attributes));
-
+        
         /// <summary>
         /// TBD
         /// </summary>
@@ -214,20 +181,7 @@ namespace Akka.Streams.Implementation
         {
             Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new FanoutPublisherSink<TIn>(attributes, AmendShape(attributes));
-
+        
         /// <summary>
         /// TBD
         /// </summary>
@@ -281,19 +235,6 @@ namespace Akka.Streams.Implementation
         /// <summary>
         /// TBD
         /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new SubscriberSink<TIn>(_subscriber, attributes, AmendShape(attributes));
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         /// <param name="shape">TBD</param>
         /// <returns>TBD</returns>
         protected override SinkModule<TIn, NotUsed> NewInstance(SinkShape<TIn> shape)
@@ -335,11 +276,6 @@ namespace Akka.Streams.Implementation
         /// <summary>
         /// TBD
         /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         /// <param name="shape">TBD</param>
         /// <returns>TBD</returns>
         protected override SinkModule<T, NotUsed> NewInstance(SinkShape<T> shape)
@@ -356,14 +292,6 @@ namespace Akka.Streams.Implementation
             materializer = NotUsed.Instance;
             return new CancellingSubscriber<T>();
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new CancelSink<T>(attributes, AmendShape(attributes));
     }
 
     /// <summary>
@@ -377,7 +305,6 @@ namespace Akka.Streams.Implementation
     public sealed class ActorSubscriberSink<TIn> : SinkModule<TIn, IActorRef>
     {
         private readonly Props _props;
-        private readonly Attributes _attributes;
 
         /// <summary>
         /// TBD
@@ -389,29 +316,16 @@ namespace Akka.Streams.Implementation
             : base(shape)
         {
             _props = props;
-            _attributes = attributes;
+            Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes => _attributes;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new ActorSubscriberSink<TIn>(_props, attributes, AmendShape(attributes));
-
+        
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="shape">TBD</param>
         /// <returns>TBD</returns>
         protected override SinkModule<TIn, IActorRef> NewInstance(SinkShape<TIn> shape)
-            => new ActorSubscriberSink<TIn>(_props, _attributes, shape);
+            => new ActorSubscriberSink<TIn>(_props, Attributes, shape);
 
         /// <summary>
         /// TBD
@@ -436,7 +350,6 @@ namespace Akka.Streams.Implementation
     {
         private readonly IActorRef _ref;
         private readonly object _onCompleteMessage;
-        private readonly Attributes _attributes;
 
         /// <summary>
         /// TBD
@@ -450,29 +363,16 @@ namespace Akka.Streams.Implementation
         {
             _ref = @ref;
             _onCompleteMessage = onCompleteMessage;
-            _attributes = attributes;
+            Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes => _attributes;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new ActorRefSink<TIn>(_ref, _onCompleteMessage, attributes, AmendShape(attributes));
-
+        
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="shape">TBD</param>
         /// <returns>TBD</returns>
         protected override SinkModule<TIn, NotUsed> NewInstance(SinkShape<TIn> shape)
-            => new ActorRefSink<TIn>(_ref, _onCompleteMessage, _attributes, shape);
+            => new ActorRefSink<TIn>(_ref, _onCompleteMessage, Attributes, shape);
 
         /// <summary>
         /// TBD

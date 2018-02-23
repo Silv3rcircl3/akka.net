@@ -1195,47 +1195,6 @@ namespace Akka.Streams.Implementation.Fusing
     /// <summary>
     /// INTERNAL API
     /// </summary>
-    internal static class SubSource
-    {
-        /// <summary>
-        /// INTERNAL API
-        /// 
-        /// HERE ACTUALLY ARE DRAGONS, YOU HAVE BEEN WARNED!
-        /// 
-        /// FIXME #19240 (jvm)
-        /// </summary>
-        /// <typeparam name="T">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <param name="s">TBD</param>
-        /// <exception cref="NotSupportedException">TBD</exception>
-        [InternalApi]
-        public static void Kill<T, TMat>(Source<T, TMat> s)
-        {
-            var module = s.Module as GraphStageModule;
-            if (module?.Stage is SubSource<T>)
-            {
-                ((SubSource<T>) module.Stage).ExternalCallback(SubSink.Cancel.Instance);
-                return;
-            }
-
-            var pub = s.Module as PublisherSource<T>;
-            if (pub != null)
-            {
-                NotUsed _;
-                pub.Create(default(MaterializationContext), out _).Subscribe(CancelingSubscriber<T>.Instance);
-                return;
-            }
-
-            var intp = GraphInterpreter.CurrentInterpreterOrNull;
-            if (intp == null)
-                throw new NotSupportedException($"cannot drop Source of type {s.Module.GetType().Name}");
-            s.RunWith(Sink.Ignore<T>(), intp.SubFusingMaterializer);
-        }
-    }
-
-    /// <summary>
-    /// INTERNAL API
-    /// </summary>
     /// <typeparam name="T">TBD</typeparam>
     internal sealed class SubSource<T> : GraphStage<SourceShape<T>>
     {

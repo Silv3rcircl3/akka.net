@@ -70,7 +70,7 @@ namespace Akka.Streams.Implementation.Fusing
     /// INTERNAL API
     /// </summary>
     [InternalApi]
-    public class GraphStageModule : AtomicModule
+    public class GraphStageModule : IAtomicModule<Shape>
     {
         /// <summary>
         /// TBD
@@ -88,38 +88,20 @@ namespace Akka.Streams.Implementation.Fusing
             Shape = shape;
             Attributes = attributes;
             Stage = stage;
+
+            Builder = LinearTraversalBuilder.FromModule(this);
         }
 
+
+        public Shape Shape { get; }
+
+        public ITraversalBuilder Builder { get; }
+        
         /// <summary>
         /// TBD
         /// </summary>
-        public override Shape Shape { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="shape">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule ReplaceShape(Shape shape) => new CopiedModule(shape, Attributes.None, this);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override IModule CarbonCopy() => ReplaceShape(Shape.DeepCopy());
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes) => new GraphStageModule(Shape, attributes, Stage);
-
+        public Attributes Attributes { get; }
+        
         /// <summary>
         /// TBD
         /// </summary>
@@ -627,140 +609,7 @@ namespace Akka.Streams.Implementation.Fusing
         /// <returns>TBD</returns>
         public override string ToString() => $"TickSource({_initialDelay}, {_interval}, {_tick})";
     }
-
-    /// <summary>
-    /// TBD
-    /// </summary>
-    public interface IMaterializedValueSource
-    {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        IModule Module { get; }
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        IMaterializedValueSource CopySource();
-        /// <summary>
-        /// TBD
-        /// </summary>
-        Outlet Outlet { get; }
-        /// <summary>
-        /// TBD
-        /// </summary>
-        StreamLayout.IMaterializedValueNode Computation { get; }
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="result">TBD</param>
-        void SetValue(object result);
-    }
-
-    /// <summary>
-    /// INTERNAL API
-    /// 
-    /// This source is not reusable, it is only created internally.
-    /// </summary>
-    /// <typeparam name="T">TBD</typeparam>
-    [InternalApi]
-    public sealed class MaterializedValueSource<T> : GraphStage<SourceShape<T>>, IMaterializedValueSource
-    {
-        #region internal classes
-
-        private sealed class Logic : GraphStageLogic
-        {
-            private readonly MaterializedValueSource<T> _source;
-
-            public Logic(MaterializedValueSource<T> source) : base(source.Shape)
-            {
-                _source = source;
-                SetHandler(source.Outlet, EagerTerminateOutput);
-            }
-
-            public override void PreStart()
-            {
-                var cb = GetAsyncCallback<T>(element => Emit(_source.Outlet, element, CompleteStage));
-                _source._promise.Task.ContinueWith(task => cb(task.Result), TaskContinuationOptions.ExecuteSynchronously);
-            }
-        }
-
-        #endregion
-
-        private static readonly Attributes Name = Attributes.CreateName("matValueSource");
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public StreamLayout.IMaterializedValueNode Computation { get; }
-
-        Outlet IMaterializedValueSource.Outlet => Outlet;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public readonly Outlet<T> Outlet;
-
-        private readonly TaskCompletionSource<T> _promise = new TaskCompletionSource<T>();
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="computation">TBD</param>
-        /// <param name="outlet">TBD</param>
-        public MaterializedValueSource(StreamLayout.IMaterializedValueNode computation, Outlet<T> outlet)
-        {
-            Computation = computation;
-            Outlet = outlet;
-            Shape = new SourceShape<T>(Outlet);
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="computation">TBD</param>
-        public MaterializedValueSource(StreamLayout.IMaterializedValueNode computation) : this(computation, new Outlet<T>("matValue")) { }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        protected override Attributes InitialAttributes => Name;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override SourceShape<T> Shape { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="value">TBD</param>
-        public void SetValue(T value) => _promise.SetResult(value);
-
-        void IMaterializedValueSource.SetValue(object result) => SetValue((T)result);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public MaterializedValueSource<T> CopySource() => new MaterializedValueSource<T>(Computation, Outlet);
-
-        IMaterializedValueSource IMaterializedValueSource.CopySource() => CopySource();
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="inheritedAttributes">TBD</param>
-        /// <returns>TBD</returns>
-        protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override string ToString() => $"MaterializedValueSource({Computation})";
-    }
-
+    
     /// <summary>
     /// TBD
     /// </summary>

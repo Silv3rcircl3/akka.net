@@ -24,7 +24,7 @@ namespace Akka.Streams
         /// INTERNAL API: Every materializable element must be backed by a stream layout module
         /// </summary>
         [InternalApi]
-        IModule Module { get; }
+        ITraversalBuilder Builder { get; }
     }
 
     /// <summary>
@@ -66,6 +66,7 @@ namespace Akka.Streams
         /// Put an asynchronous boundary around this Graph.
         /// </summary>
         /// <returns>TBD</returns>
+        /// // TODO: no longer encoded as attributes!!!!
         IGraph<TShape, TMaterialized> Async();
     }
 }

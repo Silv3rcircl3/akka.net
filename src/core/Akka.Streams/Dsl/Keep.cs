@@ -17,43 +17,23 @@ namespace Akka.Streams.Dsl
     public static class Keep
     {
         /// <summary>
-        /// TBD
+        /// Ignores the <paramref name="right"/> value and returns the <paramref name="left"/> value
         /// </summary>
-        /// <typeparam name="TLeft">TBD</typeparam>
-        /// <typeparam name="TRight">TBD</typeparam>
-        /// <param name="left">TBD</param>
-        /// <param name="right">TBD</param>
-        /// <returns>TBD</returns>
         public static TLeft Left<TLeft, TRight>(TLeft left, TRight right) => left;
 
         /// <summary>
-        /// TBD
+        /// Ignores the <paramref name="left"/> value and returns the <paramref name="right"/> value
         /// </summary>
-        /// <typeparam name="TLeft">TBD</typeparam>
-        /// <typeparam name="TRight">TBD</typeparam>
-        /// <param name="left">TBD</param>
-        /// <param name="right">TBD</param>
-        /// <returns>TBD</returns>
         public static TRight Right<TLeft, TRight>(TLeft left, TRight right) => right;
 
         /// <summary>
-        /// TBD
+        /// Combines <paramref name="left"/> and <paramref name="right"/> into a <see cref="Tuple{T1, T2}"/>
         /// </summary>
-        /// <typeparam name="TLeft">TBD</typeparam>
-        /// <typeparam name="TRight">TBD</typeparam>
-        /// <param name="left">TBD</param>
-        /// <param name="right">TBD</param>
-        /// <returns>TBD</returns>
         public static Tuple<TLeft, TRight> Both<TLeft, TRight>(TLeft left, TRight right) => Tuple.Create(left, right);
 
         /// <summary>
-        /// TBD
+        /// Ignores <paramref name="left"/> and <paramref name="right"/> and returns <see cref="NotUsed"/>.
         /// </summary>
-        /// <typeparam name="TLeft">TBD</typeparam>
-        /// <typeparam name="TRight">TBD</typeparam>
-        /// <param name="left">TBD</param>
-        /// <param name="right">TBD</param>
-        /// <returns>TBD</returns>
         public static NotUsed None<TLeft, TRight>(TLeft left, TRight right) => NotUsed.Instance;
 
 #if !CORECLR
@@ -63,13 +43,8 @@ namespace Akka.Streams.Dsl
 #endif
 
         /// <summary>
-        /// TBD
+        /// Checks weather the given <paramref name="fn"/> is <see cref="Right{TLeft,TRight}"/>
         /// </summary>
-        /// <typeparam name="T1">TBD</typeparam>
-        /// <typeparam name="T2">TBD</typeparam>
-        /// <typeparam name="T3">TBD</typeparam>
-        /// <param name="fn">TBD</param>
-        /// <returns>TBD</returns>
         public static bool IsRight<T1, T2, T3>(Func<T1, T2, T3> fn)
         {
 #if !CORECLR
@@ -85,20 +60,35 @@ namespace Akka.Streams.Dsl
         private static readonly MethodInfo KeepLeftMethodInfo = typeof(Keep).GetMethod(nameof(Left));
 #endif
 
+
         /// <summary>
-        /// TBD
+        /// Checks weather the given <paramref name="fn"/> is <see cref="Left{TLeft,TRight}"/>
         /// </summary>
-        /// <typeparam name="T1">TBD</typeparam>
-        /// <typeparam name="T2">TBD</typeparam>
-        /// <typeparam name="T3">TBD</typeparam>
-        /// <param name="fn">TBD</param>
-        /// <returns>TBD</returns>
         public static bool IsLeft<T1, T2, T3>(Func<T1, T2, T3> fn)
         {
 #if !CORECLR
             return fn.GetMethodInfo().IsGenericMethod && fn.GetMethodInfo().GetGenericMethodDefinition().MethodHandle.Value == KeepLeftMethodhandle.Value;
 #else
             return fn.GetMethodInfo().IsGenericMethod && fn.GetMethodInfo().GetGenericMethodDefinition().Equals(KeepLeftMethodInfo);
+#endif
+        }
+
+#if !CORECLR
+        private static readonly RuntimeMethodHandle KeepNoneMethodhandle = typeof(Keep).GetMethod(nameof(None)).MethodHandle;
+#else
+        private static readonly MethodInfo KeepNoneMethodInfo = typeof(Keep).GetMethod(nameof(None));
+#endif
+
+
+        /// <summary>
+        /// Checks weather the given <paramref name="fn"/> is <see cref="None{TLeft,TRight}"/>
+        /// </summary>
+        public static bool IsNone<T1, T2, T3>(Func<T1, T2, T3> fn)
+        {
+#if !CORECLR
+            return fn.GetMethodInfo().IsGenericMethod && fn.GetMethodInfo().GetGenericMethodDefinition().MethodHandle.Value == KeepNoneMethodhandle.Value;
+#else
+            return fn.GetMethodInfo().IsGenericMethod && fn.GetMethodInfo().GetGenericMethodDefinition().Equals(KeepNoneMethodhandle);
 #endif
         }
     }

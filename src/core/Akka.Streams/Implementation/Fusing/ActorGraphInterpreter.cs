@@ -166,6 +166,11 @@ namespace Akka.Streams.Implementation.Fusing
             _resume = new ActorGraphInterpreter.Resume(this);
         }
 
+        public GraphInterpreterShell(Connection[] connections, Connection[] logics, ActorMaterializerSettings settings, PhasedFusingActorMaterializerImpl materializer)
+        {
+            throw new NotImplementedException();
+        }
+
         /// <summary>
         /// TBD
         /// </summary>
@@ -190,6 +195,9 @@ namespace Akka.Streams.Implementation.Fusing
         /// TBD
         /// </summary>
         public GraphInterpreter Interpreter => _interpreter ?? (_interpreter = GetInterpreter());
+
+        public Connection[] Connections { get; set; }
+        public GraphStageLogic[] Logics { get; set; }
 
         /// <summary>
         /// TBD
@@ -966,6 +974,11 @@ namespace Akka.Streams.Implementation.Fusing
                 SetHandler(_outlet, new OutHandler(this));
             }
 
+            public BatchingActorInputBoundary(int size, GraphInterpreterShell shell, IPublisher<object> publisher, string toString)
+            {
+                throw new NotImplementedException();
+            }
+
             /// <summary>
             /// TBD
             /// </summary>
@@ -1192,10 +1205,17 @@ namespace Akka.Streams.Implementation.Fusing
                 SetHandler(_inlet, new InHandler(this));
             }
 
+            public ActorOutputBoundary(GraphInterpreterShell shell, string toString)
+            {
+                throw new NotImplementedException();
+            }
+
             /// <summary>
             /// TBD
             /// </summary>
             public override Inlet In => _inlet;
+
+            public IPublisher<object> Publisher { get; set; }
 
             /// <summary>
             /// TBD

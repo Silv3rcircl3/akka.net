@@ -75,7 +75,7 @@ namespace Akka.Streams
             system.Settings.InjectTopLevelFallback(DefaultConfig());
             settings = settings ?? ActorMaterializerSettings.Create(system);
 
-            return new ActorMaterializerImpl(
+            return new PhasedFusingActorMaterializerImpl(
                 system: system,
                 settings: settings,
                 dispatchers: system.Dispatchers,
@@ -86,10 +86,10 @@ namespace Akka.Streams
 
         private static ActorSystem ActorSystemOf(IActorRefFactory context)
         {
-            if (context is ExtendedActorSystem)
-                return (ActorSystem)context;
-            if (context is IActorContext)
-                return ((IActorContext)context).System;
+            if (context is ExtendedActorSystem system)
+                return system;
+            if (context is IActorContext actorContext)
+                return actorContext.System;
             if (context == null)
                 throw new ArgumentNullException(nameof(context), "IActorRefFactory must be defined");
 
