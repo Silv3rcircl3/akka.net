@@ -48,20 +48,7 @@ namespace Akka.Streams.Implementation.IO
         /// <summary>
         /// TBD
         /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         protected override string Label { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new FileSink(_f, _startPosition, _fileMode, attributes, AmendShape(attributes));
 
 
         /// <summary>
@@ -90,6 +77,11 @@ namespace Akka.Streams.Implementation.IO
             var actorRef = mat.ActorOf(context, props.WithDispatcher(dispatcher.Name));
             materializer = ioResultPromise.Task;
             return new ActorSubscriberImpl<ByteString>(actorRef);
+        }
+
+        public override IGraph<SinkShape<ByteString>, Task<IOResult>> WithAttributes(Attributes attributes)
+        {
+            return new FileSink(_f, _startPosition, _fileMode, attributes, AmendShape(attributes));
         }
     }
 
@@ -120,19 +112,6 @@ namespace Akka.Streams.Implementation.IO
         /// <summary>
         /// TBD
         /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new OutputStreamSink(_createOutput, attributes, AmendShape(attributes), _autoFlush);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
         /// <param name="shape">TBD</param>
         /// <returns>TBD</returns>
         protected override SinkModule<ByteString, Task<IOResult>> NewInstance(SinkShape<ByteString> shape)
@@ -156,6 +135,11 @@ namespace Akka.Streams.Implementation.IO
 
             materializer = ioResultPromise.Task;
             return new ActorSubscriberImpl<ByteString>(actorRef);
+        }
+
+        public override IGraph<SinkShape<ByteString>, Task<IOResult>> WithAttributes(Attributes attributes)
+        {
+            return new OutputStreamSink(_createOutput, attributes, AmendShape(attributes), _autoFlush);
         }
     }
 }

@@ -7,13 +7,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Runtime.Serialization;
 using System.Threading;
 using Akka.Actor;
 using Akka.Annotations;
-using Akka.Dispatch.SysMsg;
 using Akka.Event;
 using Akka.Pattern;
 using Akka.Streams.Actors;
@@ -88,46 +86,44 @@ namespace Akka.Streams.Stage
     /// TBD
     /// </summary>
     /// <typeparam name="TShape">TBD</typeparam>
-    /// <typeparam name="TMaterialized">TBD</typeparam>
-    public abstract class GraphStageWithMaterializedValue<TShape, TMaterialized> : IGraphStageWithMaterializedValue<TShape, TMaterialized> where TShape : Shape
+    /// <typeparam name="TMat">TBD</typeparam>
+    public abstract class GraphStageWithMaterializedValue<TShape, TMat> : IGraphStageWithMaterializedValue<TShape, TMat> where TShape : Shape
     {
         #region anonymous graph class
 
-        private sealed class Graph : IGraph<TShape, TMaterialized>
+        private sealed class Graph : IGraph<TShape, TMat>
         {
-            public Graph(TShape shape, IModule module, Attributes attributes)
+            public Graph(TShape shape, ITraversalBuilder builder, Attributes attributes)
             {
                 Shape = shape;
-                Module = module.WithAttributes(attributes);
+                Builder = builder.SetAttributes(attributes);
             }
 
             public TShape Shape { get; }
 
-            public IModule Module { get; }
+            public ITraversalBuilder Builder { get; }
 
-            public IGraph<TShape, TMaterialized> WithAttributes(Attributes attributes) => new Graph(Shape, Module, attributes);
 
-            public IGraph<TShape, TMaterialized> AddAttributes(Attributes attributes) => WithAttributes(Module.Attributes.And(attributes));
+            public IGraph<TShape, TMat> WithAttributes(Attributes attributes) => new Graph(Shape, Builder, attributes);
 
-            public IGraph<TShape, TMaterialized> Named(string name) => AddAttributes(Attributes.CreateName(name));
+            public IGraph<TShape, TMat> AddAttributes(Attributes attributes) => WithAttributes(Builder.Attributes.And(attributes));
 
-            public IGraph<TShape, TMaterialized> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
+            public IGraph<TShape, TMat> Named(string name) => AddAttributes(Attributes.CreateName(name));
+
+            public IGraph<TShape, TMat> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
         }
 
         #endregion
 
-        private readonly Lazy<IModule> _module;
+        private readonly Lazy<ITraversalBuilder> _builder;
 
         /// <summary>
         /// TBD
         /// </summary>
         protected GraphStageWithMaterializedValue()
         {
-            _module =
-                new Lazy<IModule>(
-                    () =>
-                        new GraphStageModule(Shape, InitialAttributes,
-                            (IGraphStageWithMaterializedValue<Shape, object>) this));
+            _builder =
+                new Lazy<ITraversalBuilder>(() => TraversalBuilder.Atomic(new GraphStageModule<TMat>(Shape, InitialAttributes, this)));
         }
 
         /// <summary>
@@ -140,44 +136,41 @@ namespace Akka.Streams.Stage
         /// </summary>
         public abstract TShape Shape { get; }
 
+        public ITraversalBuilder Builder => _builder.Value;
+
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
-        public IGraph<TShape, TMaterialized> WithAttributes(Attributes attributes) => new Graph(Shape, Module, attributes);
+        public IGraph<TShape, TMat> WithAttributes(Attributes attributes) => new Graph(Shape, Builder, attributes);
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="inheritedAttributes">TBD</param>
         /// <returns>TBD</returns>
-        public abstract ILogicAndMaterializedValue<TMaterialized> CreateLogicAndMaterializedValue(Attributes inheritedAttributes);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module => _module.Value;
+        public abstract ILogicAndMaterializedValue<TMat> CreateLogicAndMaterializedValue(Attributes inheritedAttributes);
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
-        public IGraph<TShape, TMaterialized> AddAttributes(Attributes attributes) => WithAttributes(Module.Attributes.And(attributes));
+        public IGraph<TShape, TMat> AddAttributes(Attributes attributes) => WithAttributes(Builder.Attributes.And(attributes));
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="name">TBD</param>
         /// <returns>TBD</returns>
-        public IGraph<TShape, TMaterialized> Named(string name) => AddAttributes(Attributes.CreateName(name));
+        public IGraph<TShape, TMat> Named(string name) => AddAttributes(Attributes.CreateName(name));
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public IGraph<TShape, TMaterialized> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
+        public IGraph<TShape, TMat> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
     }
 
     /// <summary>
@@ -1092,9 +1085,9 @@ namespace Akka.Streams.Stage
                 // slow path
                 if (!IsAvailable(inlet))
                     throw new ArgumentException("Cannot get element from already empty input port");
-                var failed = (GraphInterpreter.Failed)element;
+                var failed = (Failed)element;
                 element = failed.PreviousElement;
-                connection.Slot = new GraphInterpreter.Failed(failed.Reason, Empty.Instance);
+                connection.Slot = new Failed(failed.Reason, Empty.Instance);
             }
 
             return (T)element;
@@ -1152,7 +1145,7 @@ namespace Akka.Streams.Stage
             if ((connection.PortState & (InReady | InFailed)) == (InReady | InFailed))
             {
                 // This can only be Empty actually (if a cancel was concurrent with a failure)
-                return connection.Slot is GraphInterpreter.Failed failed &&
+                return connection.Slot is Failed failed &&
                        !ReferenceEquals(failed.PreviousElement, Empty.Instance);
             }
 
@@ -2373,7 +2366,6 @@ namespace Akka.Streams.Stage
     /// </summary>
     public sealed class StageActor
     {
-        private readonly Action<Tuple<IActorRef, object>> _callback;
         private readonly ActorCell _cell;
         private readonly FunctionRef _functionRef;
         private StageActorRef.Receive _behavior;
@@ -2384,7 +2376,7 @@ namespace Akka.Streams.Stage
             StageActorRef.Receive initialReceive,
             string name = null)
         {
-            _callback = getAsyncCallback(InternalReceive);
+            var callback = getAsyncCallback(InternalReceive);
             _behavior = initialReceive;
 
             switch (materializer.Supervisor)
@@ -2403,7 +2395,7 @@ namespace Akka.Streams.Stage
                         materializer.Logger.Warning("{0} message sent to StageActor({1}) will be ignored, since it is not a real Actor. " +
                                                     "Use a custom message type to communicate with it instead.", message, _functionRef.Path);
                         break;
-                    default: _callback(Tuple.Create(sender, message)); break;
+                    default: callback(Tuple.Create(sender, message)); break;
                 }
             });
         }

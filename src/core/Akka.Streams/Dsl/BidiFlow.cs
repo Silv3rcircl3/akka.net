@@ -6,7 +6,6 @@
 //-----------------------------------------------------------------------
 
 using System;
-using System.Linq;
 using Akka.Streams.Implementation;
 
 namespace Akka.Streams.Dsl
@@ -30,9 +29,9 @@ namespace Akka.Streams.Dsl
         public static BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat> FromGraph<TIn1, TOut1, TIn2, TOut2, TMat>(
             IGraph<BidiShape<TIn1, TOut1, TIn2, TOut2>, TMat> graph)
         {
-            return graph is BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>
-                ? (BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>) graph
-                : new BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>(graph.Module);
+            return graph is BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat> flow
+                ? flow
+                : new BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>(graph.Builder, graph.Shape);
         }
 
         /// <summary>
@@ -69,8 +68,16 @@ namespace Akka.Streams.Dsl
             <TIn1, TOut1, TIn2, TOut2, TMat1, TMat2, TMat>(IGraph<FlowShape<TIn1, TOut1>, TMat1> flow1,
                 IGraph<FlowShape<TIn2, TOut2>, TMat2> flow2, Func<TMat1, TMat2, TMat> combine)
         {
-            return FromGraph(GraphDsl.Create(flow1, flow2, combine,
-                 (builder, f1, f2) => new BidiShape<TIn1, TOut1, TIn2, TOut2>(f1.Inlet, f1.Outlet, f2.Inlet, f2.Outlet)));
+            var newFlow1Shape = flow1.Shape.DeepCopy();
+            var newFlow2Shape = flow2.Shape.DeepCopy();
+
+            return new BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>(
+                TraversalBuilder.Empty()
+                    .Add(flow1.Builder, newFlow1Shape)
+                    .Add(flow2.Builder, newFlow2Shape, combine),
+                new BidiShape<TIn1, TOut1, TIn2, TOut2>((Inlet<TIn1>)newFlow1Shape.Inlets[0],
+                    (Outlet<TOut1>)newFlow1Shape.Outlets[0], (Inlet<TIn2>)newFlow2Shape.Inlets[0],
+                    (Outlet<TOut2>)newFlow2Shape.Outlets[0]));
         }
 
         /// <summary>
@@ -151,26 +158,23 @@ namespace Akka.Streams.Dsl
     /// <typeparam name="TMat">TBD</typeparam>
     public class BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat> : IGraph<BidiShape<TIn1, TOut1, TIn2, TOut2>, TMat>
     {
-        private readonly IModule _module;
-
         /// <summary>
         /// TBD
         /// </summary>
-        /// <param name="module">TBD</param>
-        public BidiFlow(IModule module)
+        /// <param name="builder">TBD</param>
+        public BidiFlow(ITraversalBuilder builder, BidiShape<TIn1, TOut1, TIn2, TOut2> shape)
         {
-            _module = module;
+            Shape = shape;
+            Builder = builder;
         }
 
         /// <summary>
         /// TBD
         /// </summary>
-        public BidiShape<TIn1, TOut1, TIn2, TOut2> Shape => (BidiShape<TIn1, TOut1, TIn2, TOut2>)_module.Shape;
+        public BidiShape<TIn1, TOut1, TIn2, TOut2> Shape { get; }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module => _module;
+        public ITraversalBuilder Builder { get; }
+
 
         /// <summary>
         /// TBD
@@ -179,7 +183,7 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public IGraph<BidiShape<TIn1, TOut1, TIn2, TOut2>, TMat> WithAttributes(Attributes attributes)
         {
-            return new BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>(_module.WithAttributes(attributes));
+            return new BidiFlow<TIn1, TOut1, TIn2, TOut2, TMat>(Builder.SetAttributes(attributes), Shape);
         }
 
         /// <summary>
@@ -189,7 +193,7 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public IGraph<BidiShape<TIn1, TOut1, TIn2, TOut2>, TMat> AddAttributes(Attributes attributes)
         {
-            return WithAttributes(Module.Attributes.And(attributes));
+            return WithAttributes(Builder.Attributes.And(attributes));
         }
 
         /// <summary>
@@ -217,7 +221,7 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public BidiFlow<TIn2, TOut2, TIn1, TOut1, TMat> Reversed()
         {
-            return new BidiFlow<TIn2, TOut2, TIn1, TOut1, TMat>(Module.ReplaceShape(Shape.Reversed()));
+            return new BidiFlow<TIn2, TOut2, TIn1, TOut1, TMat>(Builder, new BidiShape<TIn2, TOut2, TIn1, TOut1>(Shape.Inlet2, Shape.Outlet2, Shape.Inlet1, Shape.Outlet1));
         }
 
         /// <summary>
@@ -280,15 +284,13 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public BidiFlow<TIn1, TOut12, TIn21, TOut2, TMat> AtopMat<TOut12, TIn21, TMat2, TMat3>(BidiFlow<TOut1, TOut12, TIn21, TIn2, TMat2> bidi, Func<TMat, TMat2, TMat3> combine)
         {
-            var copy = bidi.Module.CarbonCopy();
-            var ins = copy.Shape.Inlets.ToArray();
-            var outs = copy.Shape.Outlets.ToArray();
+            var newBidiShape = bidi.Shape.DeepCopy();
 
-            return new BidiFlow<TIn1, TOut12, TIn21, TOut2, TMat>(Module
-                .Compose(copy, combine)
-                .Wire(Shape.Outlet1, ins[0])
-                .Wire(outs[1], Shape.Inlet2)
-                .ReplaceShape(new BidiShape<TIn1, TOut12, TIn21, TOut2>(Shape.Inlet1, (Outlet<TOut12>)outs[0], (Inlet<TIn21>)ins[1], Shape.Outlet2)));
+            return new BidiFlow<TIn1, TOut12, TIn21, TOut2, TMat>(
+                Builder.Add(bidi.Builder, newBidiShape, combine)
+                .Wire(Shape.Outlet1, newBidiShape.Inlets[0])
+                .Wire(newBidiShape.Outlets[1], Shape.Inlet2),
+                new BidiShape<TIn1, TOut12, TIn21, TOut2>(Shape.Inlet1, (Outlet<TOut12>)newBidiShape.Outlets[0], (Inlet<TIn21>)newBidiShape.Inlets[1], Shape.Outlet2));
         }
 
         /// <summary>
@@ -347,14 +349,18 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public Flow<TIn1, TOut2, TMat3> JoinMat<TMat2, TMat3>(Flow<TOut1, TIn2, TMat2> flow, Func<TMat, TMat2, TMat3> combine)
         {
-            var copy = flow.Module.CarbonCopy();
-            var inlet = copy.Shape.Inlets.First();
-            var outlet = copy.Shape.Outlets.First();
-            return new Flow<TIn1, TOut2, TMat3>(Module
-                .Compose(copy, combine)
-                .Wire(Shape.Outlets.First(), inlet)
-                .Wire(outlet, Shape.Inlets.ElementAt(1))
-                .ReplaceShape(new FlowShape<TIn1, TOut2>((Inlet<TIn1>)Shape.Inlets.First(), (Outlet<TOut2>)Shape.Outlets.ElementAt(1))));
+            var newFlowSHape = flow.Shape.DeepCopy();
+
+            var resultBuilder = Builder
+                .Add(flow.Builder, newFlowSHape, combine)
+                .Wire(Shape.Outlet1, newFlowSHape.Inlets[0])
+                .Wire(newFlowSHape.Outlets[0], Shape.Inlet2);
+
+            var newShape = new FlowShape<TIn1, TOut2>(Shape.Inlet1, Shape.Outlet2);
+
+            return new Flow<TIn1, TOut2, TMat3>(
+                LinearTraversalBuilder.FromBuilder<TMat, TMat2, TMat2>(resultBuilder, newShape, Keep.Right),
+                newShape);
         }
     }
 }

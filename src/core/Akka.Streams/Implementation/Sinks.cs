@@ -45,7 +45,7 @@ namespace Akka.Streams.Implementation
     /// <typeparam name="TIn">TBD</typeparam>
     /// <typeparam name="TMat">TBD</typeparam>
     [InternalApi]
-    public abstract class SinkModule<TIn, TMat> : IAtomicModule<SinkShape<TIn>>, ISinkModule
+    public abstract class SinkModule<TIn, TMat> : IAtomicModuleWithMaterializedValue<SinkShape<TIn>, TMat>, ISinkModule
     {
         /// <summary>
         /// TBD
@@ -117,6 +117,14 @@ namespace Akka.Streams.Implementation
         public SinkShape<TIn> Shape { get; }
 
         public ITraversalBuilder Builder { get; }
+
+        public abstract IGraph<SinkShape<TIn>, TMat> WithAttributes(Attributes attributes);
+
+        public IGraph<SinkShape<TIn>, TMat> AddAttributes(Attributes attributes) => WithAttributes(Builder.Attributes.And(attributes));
+
+        public IGraph<SinkShape<TIn>, TMat> Named(string name) => AddAttributes(Attributes.CreateName(name));
+
+        public IGraph<SinkShape<TIn>, TMat> Async() => AddAttributes(Attributes.CreateAsyncBoundary());
     }
 
     /// <summary>
@@ -164,6 +172,11 @@ namespace Akka.Streams.Implementation
             materializer = processor;
             return processor;
         }
+
+        public override IGraph<SinkShape<TIn>, IPublisher<TIn>> WithAttributes(Attributes attributes)
+        {
+            return new PublisherSink<TIn>(attributes, AmendShape(attributes));
+        }
     }
 
     /// <summary>
@@ -206,6 +219,11 @@ namespace Akka.Streams.Implementation
             // Resolve cyclic dependency with actor. This MUST be the first message no matter what.
             materializer = fanoutProcessor;
             return fanoutProcessor;
+        }
+
+        public override IGraph<SinkShape<TIn>, IPublisher<TIn>> WithAttributes(Attributes attributes)
+        {
+            return new FanoutPublisherSink<TIn>(attributes, AmendShape(attributes));
         }
     }
 
@@ -251,6 +269,11 @@ namespace Akka.Streams.Implementation
             materializer = NotUsed.Instance;
             return _subscriber;
         }
+
+        public override IGraph<SinkShape<TIn>, NotUsed> WithAttributes(Attributes attributes)
+        {
+            return new SubscriberSink<TIn>(_subscriber, attributes, AmendShape(attributes));
+        }
     }
 
     /// <summary>
@@ -291,6 +314,11 @@ namespace Akka.Streams.Implementation
         {
             materializer = NotUsed.Instance;
             return new CancellingSubscriber<T>();
+        }
+
+        public override IGraph<SinkShape<T>, NotUsed> WithAttributes(Attributes attributes)
+        {
+            return new CancelSink<T>(attributes, AmendShape(attributes));
         }
     }
 
@@ -338,6 +366,11 @@ namespace Akka.Streams.Implementation
             var subscriberRef = ActorMaterializerHelper.Downcast(context.Materializer).ActorOf(context, _props);
             materializer = subscriberRef;
             return ActorSubscriber.Create<TIn>(subscriberRef);
+        }
+
+        public override IGraph<SinkShape<TIn>, IActorRef> WithAttributes(Attributes attributes)
+        {
+            return new ActorSubscriberSink<TIn>(_props, attributes, AmendShape(attributes));
         }
     }
 
@@ -389,6 +422,11 @@ namespace Akka.Streams.Implementation
 
             materializer = null;
             return new ActorSubscriberImpl<TIn>(subscriberRef);
+        }
+
+        public override IGraph<SinkShape<TIn>, NotUsed> WithAttributes(Attributes attributes)
+        {
+            return new ActorRefSink<TIn>(_ref, _onCompleteMessage, attributes, AmendShape(attributes));
         }
     }
 

@@ -34,7 +34,7 @@ namespace Akka.Streams.Implementation
         /// <param name="subFlowFuser">TBD</param>
         /// <returns>TBD</returns>
         [InternalApi]
-        public abstract TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<GraphInterpreterShell, IActorRef> subFlowFuser);
+        public abstract TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> subFlowFuser);
 
         /// <summary>
         /// INTERNAL API
@@ -45,7 +45,7 @@ namespace Akka.Streams.Implementation
         /// <param name="initialAttributes">TBD</param>
         /// <returns>TBD</returns>
         [InternalApi]
-        public abstract TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<GraphInterpreterShell, IActorRef> subFlowFuser, Attributes initialAttributes);
+        public abstract TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> subFlowFuser, Attributes initialAttributes);
 
         /// <summary>
         /// INTERNAL API
@@ -101,14 +101,14 @@ namespace Akka.Streams.Implementation
     public class SubFusingActorMaterializerImpl : IMaterializer
     {
         private readonly ExtendedActorMaterializer _delegateMaterializer;
-        private readonly Func<GraphInterpreterShell, IActorRef> _registerShell;
+        private readonly Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> _registerShell;
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="delegateMaterializer">TBD</param>
         /// <param name="registerShell">TBD</param>
-        public SubFusingActorMaterializerImpl(ExtendedActorMaterializer delegateMaterializer, Func<GraphInterpreterShell, IActorRef> registerShell)
+        public SubFusingActorMaterializerImpl(ExtendedActorMaterializer delegateMaterializer, Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> registerShell)
         {
             _delegateMaterializer = delegateMaterializer;
             _registerShell = registerShell;

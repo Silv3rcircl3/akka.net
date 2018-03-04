@@ -10,6 +10,7 @@ using Akka.Streams.Implementation;
 
 namespace Akka.Streams.Dsl
 {
+    // todo remove?
     /// <summary>
     /// Flow with attached input and output, can be executed.
     /// </summary>
@@ -66,15 +67,11 @@ namespace Akka.Streams.Dsl
     /// TBD
     /// </summary>
     /// <typeparam name="TMat">TBD</typeparam>
-    public sealed class RunnableGraph<TMat> : IRunnableGraph<TMat>
+    public sealed class RunnableGraph<TMat> : IGraph<ClosedShape, TMat>
     {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="module">TBD</param>
-        public RunnableGraph(IModule module)
+        public RunnableGraph(ITraversalBuilder builder)
         {
-            Module = module;
+            Builder = builder;
             Shape = ClosedShape.Instance;
         }
 
@@ -83,10 +80,8 @@ namespace Akka.Streams.Dsl
         /// </summary>
         public ClosedShape Shape { get; }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module { get; }
+        public ITraversalBuilder Builder { get; }
+
 
         IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.WithAttributes(Attributes attributes)
             => WithAttributes(attributes);
@@ -96,39 +91,31 @@ namespace Akka.Streams.Dsl
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat> AddAttributes(Attributes attributes)
-            => WithAttributes(Module.Attributes.And(attributes));
+        public RunnableGraph<TMat> AddAttributes(Attributes attributes)
+            => WithAttributes(Builder.Attributes.And(attributes));
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="name">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat> Named(string name)
+        public RunnableGraph<TMat> Named(string name)
             => AddAttributes(Attributes.CreateName(name));
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat> Async()
-           => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
+        public RunnableGraph<TMat> Async()
+            => new RunnableGraph<TMat>(Builder.MakeIsland(IslandTag.GraphStage));
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat> WithAttributes(Attributes attributes)
-            => new RunnableGraph<TMat>(Module.WithAttributes(attributes));
-
-        IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.AddAttributes(Attributes attributes)
-            => AddAttributes(attributes);
-
-        IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.Named(string name)
-            => Named(name);
-
-        IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.Async() => Async();
+        public RunnableGraph<TMat> WithAttributes(Attributes attributes)
+            => new RunnableGraph<TMat>(Builder.SetAttributes(attributes));
 
         /// <summary>
         /// TBD
@@ -136,8 +123,8 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="TMat2">TBD</typeparam>
         /// <param name="func">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat2> MapMaterializedValue<TMat2>(Func<TMat, TMat2> func)
-            => new RunnableGraph<TMat2>(Module.TransformMaterializedValue(func));
+        public RunnableGraph<TMat2> MapMaterializedValue<TMat2>(Func<TMat, TMat2> func)
+            => new RunnableGraph<TMat2>(Builder.TransformMataterialized(func));
 
         /// <summary>
         /// TBD
@@ -145,6 +132,12 @@ namespace Akka.Streams.Dsl
         /// <param name="materializer">TBD</param>
         /// <returns>TBD</returns>
         public TMat Run(IMaterializer materializer) => materializer.Materialize(this);
+
+        IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.AddAttributes(Attributes attributes) => AddAttributes(attributes);
+
+        IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.Named(string name) => Named(name);
+
+        IGraph<ClosedShape, TMat> IGraph<ClosedShape, TMat>.Async() => Async();
     }
 
     /// <summary>
@@ -160,6 +153,6 @@ namespace Akka.Streams.Dsl
         /// <param name="g">TBD</param>
         /// <returns>TBD</returns>
         public static RunnableGraph<TMat> FromGraph<TMat>(IGraph<ClosedShape, TMat> g)
-            => g as RunnableGraph<TMat> ?? new RunnableGraph<TMat>(g.Module);
+            => g as RunnableGraph<TMat> ?? new RunnableGraph<TMat>(g.Builder);
     }
 }

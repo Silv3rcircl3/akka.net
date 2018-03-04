@@ -7,14 +7,14 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
+using System.Collections.Immutable;
 using System.Text;
 using Akka.Actor;
 using Akka.Annotations;
 using Akka.Event;
 using Akka.Pattern;
 using Akka.Streams.Stage;
+using Akka.Util;
 using Reactive.Streams;
 using static Akka.Streams.Implementation.Fusing.GraphInterpreter;
 
@@ -25,426 +25,14 @@ namespace Akka.Streams.Implementation.Fusing
     /// INTERNAL API
     /// </summary>
     [InternalApi]
-    public sealed class GraphModule : AtomicModule
-    {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public readonly IModule[] MaterializedValueIds;
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public readonly GraphAssembly Assembly;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="assembly">TBD</param>
-        /// <param name="shape">TBD</param>
-        /// <param name="attributes">TBD</param>
-        /// <param name="materializedValueIds">TBD</param>
-        public GraphModule(GraphAssembly assembly, Shape shape, Attributes attributes, IModule[] materializedValueIds)
-        {
-            Assembly = assembly;
-            Shape = shape;
-            Attributes = attributes;
-            MaterializedValueIds = materializedValueIds;
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Shape Shape { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes) => new GraphModule(Assembly, Shape, attributes, MaterializedValueIds);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override IModule CarbonCopy() => new CopiedModule(Shape.DeepCopy(), Attributes.None, this);
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="newShape">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule ReplaceShape(Shape newShape) =>
-            !newShape.Equals(Shape) ? (IModule)CompositeModule.Create(this, newShape) : this;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override string ToString() => "GraphModule\n" +
-                                             $"  {Assembly.ToString().Replace("\n", "\n  ")}\n" +
-                                             $"  shape={Shape}, attributes={Attributes}\n" +
-                                             $"  MaterializedValueIds={string.Join<IModule>("\n   ", MaterializedValueIds)}";
-    }
-
-    /// <summary>
-    /// INTERNAL API
-    /// </summary>
-    [InternalApi]
-    public sealed class GraphInterpreterShell
-    {
-        private readonly GraphAssembly _assembly;
-        private readonly Connection[] _connections;
-        private readonly GraphStageLogic[] _logics;
-        private readonly Shape _shape;
-        private readonly ActorMaterializerSettings _settings;
-        /// <summary>
-        /// TBD
-        /// </summary>
-        internal readonly ExtendedActorMaterializer Materializer;
-
-        /// <summary>
-        /// Limits the number of events processed by the interpreter before scheduling
-        /// a self-message for fairness with other actors. The basic assumption here is
-        /// to give each input buffer slot a chance to run through the whole pipeline
-        /// and back (for the elements).
-        /// 
-        /// Considered use case:
-        ///  - assume a composite Sink of one expand and one fold 
-        ///  - assume an infinitely fast source of data
-        ///  - assume maxInputBufferSize == 1
-        ///  - if the event limit is greater than maxInputBufferSize * (ins + outs) than there will always be expand activity
-        ///  because no data can enter "fast enough" from the outside
-        /// </summary>
-        private readonly int _shellEventLimit;
-
-        // Limits the number of events processed by the interpreter on an abort event.
-        private readonly int _abortLimit;
-        private readonly ActorGraphInterpreter.BatchingActorInputBoundary[] _inputs;
-        private readonly ActorGraphInterpreter.IActorOutputBoundary[] _outputs;
-
-        private ILoggingAdapter _log;
-        private GraphInterpreter _interpreter;
-        private int _subscribersPending;
-        private int _publishersPending;
-        private bool _resumeScheduled;
-        private bool _waitingForShutdown;
-        private Action<object> _enqueueToShortCircuit;
-        private bool _interpreterCompleted;
-        private readonly ActorGraphInterpreter.Resume _resume;
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="assembly">TBD</param>
-        /// <param name="connections">TBD</param>
-        /// <param name="logics">TBD</param>
-        /// <param name="shape">TBD</param>
-        /// <param name="settings">TbD</param>
-        /// <param name="materializer">TBD</param>
-        public GraphInterpreterShell(GraphAssembly assembly, Connection[] connections, GraphStageLogic[] logics, Shape shape, ActorMaterializerSettings settings, ExtendedActorMaterializer materializer)
-        {
-            _assembly = assembly;
-            _connections = connections;
-            _logics = logics;
-            _shape = shape;
-            _settings = settings;
-            Materializer = materializer;
-
-            _inputs = new ActorGraphInterpreter.BatchingActorInputBoundary[shape.Inlets.Count()];
-            _outputs = new ActorGraphInterpreter.IActorOutputBoundary[shape.Outlets.Count()];
-            _subscribersPending = _inputs.Length;
-            _publishersPending = _outputs.Length;
-            _shellEventLimit = settings.MaxInputBufferSize * (assembly.Inlets.Length + assembly.Outlets.Length);
-            _abortLimit = _shellEventLimit * 2;
-
-            _resume = new ActorGraphInterpreter.Resume(this);
-        }
-
-        public GraphInterpreterShell(Connection[] connections, Connection[] logics, ActorMaterializerSettings settings, PhasedFusingActorMaterializerImpl materializer)
-        {
-            throw new NotImplementedException();
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public bool IsInitialized => Self != null;
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public bool IsTerminated => _interpreterCompleted && CanShutdown;
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public bool CanShutdown => _subscribersPending + _publishersPending == 0;
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IActorRef Self { get; private set; }
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public ILoggingAdapter Log => _log ?? (_log = GetLogger());
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public GraphInterpreter Interpreter => _interpreter ?? (_interpreter = GetInterpreter());
-
-        public Connection[] Connections { get; set; }
-        public GraphStageLogic[] Logics { get; set; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="self">TBD</param>
-        /// <param name="subMat">TBD</param>
-        /// <param name="enqueueToShourtCircuit">TBD</param>
-        /// <param name="eventLimit">TBD</param>
-        /// <returns>TBD</returns>
-        public int Init(IActorRef self, SubFusingActorMaterializerImpl subMat, Action<object> enqueueToShourtCircuit, int eventLimit)
-        {
-            Self = self;
-            _enqueueToShortCircuit = enqueueToShourtCircuit;
-
-            for (int i = 0; i < _inputs.Length; i++)
-            {
-                var input = new ActorGraphInterpreter.BatchingActorInputBoundary(_settings.MaxInputBufferSize, i);
-                _inputs[i] = input;
-                Interpreter.AttachUpstreamBoundary(_connections[i], input);
-            }
-
-            var offset = _assembly.ConnectionCount - _outputs.Length;
-            for (int i = 0; i < _outputs.Length; i++)
-            {
-                var outputType = _shape.Outlets[i].GetType().GetGenericArguments().First();
-                var output = (ActorGraphInterpreter.IActorOutputBoundary) typeof(ActorGraphInterpreter.ActorOutputBoundary<>).Instantiate(outputType, Self, this, i);
-                _outputs[i] = output;
-                Interpreter.AttachDownstreamBoundary(_connections[i + offset], (DownstreamBoundaryStageLogic) output);
-            }
-
-            Interpreter.Init(subMat);
-            return RunBatch(eventLimit);
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="e">TBD</param>
-        /// <param name="eventLimit">TBD</param>
-        /// <returns>TBD</returns>
-        public int Receive(ActorGraphInterpreter.IBoundaryEvent e, int eventLimit)
-        {
-            _resumeScheduled = false;
-
-            if (_waitingForShutdown)
-            {
-                switch (e)
-                {
-                    case ActorGraphInterpreter.ExposedPublisher exposedPublisher:
-                        _outputs[exposedPublisher.Id].ExposedPublisher(exposedPublisher.Publisher);
-                        _publishersPending--;
-                        if (CanShutdown)
-                            _interpreterCompleted = true;
-                        break;
-
-                    case ActorGraphInterpreter.OnSubscribe onSubscribe:
-                        ReactiveStreamsCompliance.TryCancel(onSubscribe.Subscription);
-                        _subscribersPending--;
-                        if (CanShutdown)
-                            _interpreterCompleted = true;
-                        break;
-
-                    case ActorGraphInterpreter.Abort _:
-                        TryAbort(new TimeoutException(
-                            $"Streaming actor has been already stopped processing (normally), but not all of its inputs or outputs have been subscribed in [{_settings.SubscriptionTimeoutSettings.Timeout}]. Aborting actor now."));
-                        break;
-                }
-                return eventLimit;
-            }
-
-            // Cases that are most likely on the hot path, in decreasing order of frequency
-            switch (e)
-            {
-                case ActorGraphInterpreter.OnNext onNext:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  OnNext {onNext.Event} id={onNext.Id}");
-                    _inputs[onNext.Id].OnNext(onNext.Event);
-                    return RunBatch(eventLimit);
-
-                case ActorGraphInterpreter.RequestMore requestMore:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  Request {requestMore.Demand} id={requestMore.Id}");
-                    _outputs[requestMore.Id].RequestMore(requestMore.Demand);
-                    return RunBatch(eventLimit);
-
-                case ActorGraphInterpreter.Resume _:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  Resume");
-                    if (Interpreter.IsSuspended)
-                        return RunBatch(eventLimit);
-                    return eventLimit;
-
-                case ActorGraphInterpreter.AsyncInput asyncInput:
-                    Interpreter.RunAsyncInput(asyncInput.Logic, asyncInput.Event, asyncInput.Handler);
-                    if (eventLimit == 1 && _interpreter.IsSuspended)
-                    {
-                        SendResume(true);
-                        return 0;
-                    }
-                    return RunBatch(eventLimit - 1);
-
-                case ActorGraphInterpreter.OnError onError:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  OnError id={onError.Id}");
-                    _inputs[onError.Id].OnError(onError.Cause);
-                    return RunBatch(eventLimit);
-
-                case ActorGraphInterpreter.OnComplete onComplete:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  OnComplete id={onComplete.Id}");
-                    _inputs[onComplete.Id].OnComplete();
-                    return RunBatch(eventLimit);
-
-                case ActorGraphInterpreter.OnSubscribe onSubscribe:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  OnSubscribe id={onSubscribe.Id}");
-                    _subscribersPending--;
-                    _inputs[onSubscribe.Id].OnSubscribe(onSubscribe.Subscription);
-                    return RunBatch(eventLimit);
-
-                case ActorGraphInterpreter.Cancel cancel:
-                    if (IsDebug) Console.WriteLine($"{Interpreter.Name}  Cancel id={cancel.Id}");
-                    _outputs[cancel.Id].Cancel();
-                    return RunBatch(eventLimit);
-
-                case ActorGraphInterpreter.SubscribePending subscribePending:
-                    _outputs[subscribePending.Id].SubscribePending();
-                    return eventLimit;
-
-                case ActorGraphInterpreter.ExposedPublisher exposedPublisher:
-                    _publishersPending--;
-                    _outputs[exposedPublisher.Id].ExposedPublisher(exposedPublisher.Publisher);
-                    return eventLimit;
-            }
-
-            return eventLimit;
-        }
-
-        /**
-         * Attempts to abort execution, by first propagating the reason given until either
-         *  - the interpreter successfully finishes
-         *  - the event limit is reached
-         *  - a new error is encountered
-         */
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="reason">TBD</param>
-        /// <exception cref="IllegalStateException">TBD</exception>
-        /// <returns>TBD</returns>
-        public void TryAbort(Exception reason)
-        {
-            var ex = reason is ISpecViolation
-                ? new IllegalStateException("Shutting down because of violation of the Reactive Streams specification",
-                    reason)
-                : reason;
-
-            // This should handle termination while interpreter is running. If the upstream have been closed already this
-            // call has no effect and therefore does the right thing: nothing.
-            try
-            {
-                foreach (var input in _inputs)
-                    input.OnInternalError(ex);
-
-                Interpreter.Execute(_abortLimit);
-                Interpreter.Finish();
-            }
-            catch (Exception) { /* swallow? */ }
-            finally
-            {
-                _interpreterCompleted = true;
-                // Will only have an effect if the above call to the interpreter failed to emit a proper failure to the downstream
-                // otherwise this will have no effect
-                foreach (var output in _outputs)
-                    output.Fail(ex);
-                foreach (var input in _inputs)
-                    input.Cancel();
-            }
-        }
-
-        private int RunBatch(int actorEventLimit)
-        {
-            try
-            {
-                var usingShellLimit = _shellEventLimit < actorEventLimit;
-                var remainingQuota = _interpreter.Execute(Math.Min(actorEventLimit, _shellEventLimit));
-
-                if (Interpreter.IsCompleted)
-                {
-                    // Cannot stop right away if not completely subscribed
-                    if (CanShutdown)
-                        _interpreterCompleted = true;
-                    else
-                    {
-                        _waitingForShutdown = true;
-                        Materializer.ScheduleOnce(_settings.SubscriptionTimeoutSettings.Timeout,
-                            () => Self.Tell(new ActorGraphInterpreter.Abort(this)));
-                    }
-                }
-                else if (Interpreter.IsSuspended && !_resumeScheduled)
-                    SendResume(!usingShellLimit);
-
-                return usingShellLimit ? actorEventLimit - _shellEventLimit + remainingQuota : remainingQuota;
-            }
-            catch (Exception reason)
-            {
-                TryAbort(reason);
-                return actorEventLimit - 1;
-            }
-        }
-
-        private void SendResume(bool sendResume)
-        {
-            _resumeScheduled = true;
-            if (sendResume)
-                Self.Tell(_resume);
-            else
-                _enqueueToShortCircuit(_resume);
-        }
-
-        private GraphInterpreter GetInterpreter()
-        {
-            return new GraphInterpreter(_assembly, Materializer, Log, _logics, _connections,
-                (logic, @event, handler) =>
-                {
-                    var asyncInput = new ActorGraphInterpreter.AsyncInput(this, logic, @event, handler);
-                    var currentInterpreter = CurrentInterpreterOrNull;
-                    if (currentInterpreter == null || !Equals(currentInterpreter.Context, Self))
-                        Self.Tell(new ActorGraphInterpreter.AsyncInput(this, logic, @event, handler));
-                    else
-                        _enqueueToShortCircuit(asyncInput);
-                }, _settings.IsFuzzingMode, Self);
-        }
-
-        private BusLogging GetLogger()
-        {
-            return new BusLogging(Materializer.System.EventStream, Self.ToString(), typeof(GraphInterpreterShell), new DefaultLogMessageFormatter());
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <returns>TBD</returns>
-        public override string ToString() => $"GraphInterpreterShell\n  {_assembly.ToString().Replace("\n", "\n  ")}";
-    }
-
-    /// <summary>
-    /// INTERNAL API
-    /// </summary>
-    [InternalApi]
     public class ActorGraphInterpreter : ActorBase
     {
-        #region messages
+        public sealed class ResumeActor : IDeadLetterSuppression, INoSerializationVerificationNeeded
+        {
+            public static ResumeActor Instance {get;} = new ResumeActor();
+
+            private ResumeActor() { }          
+        }
 
         /// <summary>
         /// TBD
@@ -455,534 +43,248 @@ namespace Akka.Streams.Implementation.Fusing
             /// TBD
             /// </summary>
             GraphInterpreterShell Shell { get; }
+
+            int Execute(int eventLimit);
+        }
+
+        public abstract class SimpleBoundaryEvent : IBoundaryEvent
+        {
+            public abstract GraphInterpreterShell Shell { get; }
+
+            public int Execute(int eventLimit)
+            {
+                var wasNotShutDown = !Shell.Interpreter.IsStageCompleted(Logic);
+                Execute();
+
+                if(wasNotShutDown)
+                    Shell.Interpreter.AfterStageHasRun(Logic);
+                return Shell.RunBatch(eventLimit);
+            }
+
+            public abstract GraphStageLogic Logic {get;}
+
+            public abstract void Execute();
         }
 
         /// <summary>
         /// TBD
         /// </summary>
-        public struct OnError : IBoundaryEvent
+        public class BatchingActorInputBoundary<T> : UpstreamBoundaryStageLogic, IOutHandler, IActorInputBoundary
         {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly Exception Cause;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            /// <param name="cause">TBD</param>
-            public OnError(GraphInterpreterShell shell, int id, Exception cause)
+            #region Messages
+
+            private sealed class OnErrorEvent : SimpleBoundaryEvent
             {
-                Shell = shell;
-                Id = id;
-                Cause = cause;
-            }
+                private readonly BatchingActorInputBoundary<T> _boundary;
+                private readonly Exception _cause;
 
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct OnComplete : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public OnComplete(GraphInterpreterShell shell, int id)
-            {
-                Shell = shell;
-                Id = id;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct OnNext : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly object Event;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            /// <param name="event">TBD</param>
-            public OnNext(GraphInterpreterShell shell, int id, object @event)
-            {
-                Shell = shell;
-                Id = id;
-                Event = @event;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct OnSubscribe : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly ISubscription Subscription;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            /// <param name="subscription">TBD</param>
-            public OnSubscribe(GraphInterpreterShell shell, int id, ISubscription subscription)
-            {
-                Shell = shell;
-                Id = id;
-                Subscription = subscription;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct RequestMore : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly long Demand;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            /// <param name="demand">TBD</param>
-            public RequestMore(GraphInterpreterShell shell, int id, long demand)
-            {
-                Shell = shell;
-                Id = id;
-                Demand = demand;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct Cancel : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public Cancel(GraphInterpreterShell shell, int id)
-            {
-                Shell = shell;
-                Id = id;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct SubscribePending : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public SubscribePending(GraphInterpreterShell shell, int id)
-            {
-                Shell = shell;
-                Id = id;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct ExposedPublisher : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly int Id;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly IActorPublisher Publisher;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            /// <param name="publisher">TBD</param>
-            public ExposedPublisher(GraphInterpreterShell shell, int id, IActorPublisher publisher)
-            {
-                Shell = shell;
-                Id = id;
-                Publisher = publisher;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct AsyncInput : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly GraphStageLogic Logic;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly object Event;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public readonly Action<object> Handler;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            /// <param name="logic">TBD</param>
-            /// <param name="event">TBD</param>
-            /// <param name="handler">TBD</param>
-            /// <returns>TBD</returns>
-            public AsyncInput(GraphInterpreterShell shell, GraphStageLogic logic, object @event, Action<object> handler)
-            {
-                Shell = shell;
-                Logic = logic;
-                Event = @event;
-                Handler = handler;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct Resume : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            public Resume(GraphInterpreterShell shell) => Shell = shell;
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public struct Abort : IBoundaryEvent
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="shell">TBD</param>
-            public Abort(GraphInterpreterShell shell) => Shell = shell;
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public GraphInterpreterShell Shell { get; }
-        }
-
-        private class ShellRegistered
-        {
-            public static readonly ShellRegistered Instance = new ShellRegistered();
-            private ShellRegistered()
-            {
-            }
-        }
-        #endregion
-
-        #region internal classes
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <typeparam name="T">TBD</typeparam>
-        public sealed class BoundaryPublisher<T> : ActorPublisher<T>
-        {
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="parent">TBD</param>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public BoundaryPublisher(IActorRef parent, GraphInterpreterShell shell, int id) : base(parent)
-            {
-                _wakeUpMessage = new SubscribePending(shell, id);
-            }
-
-            private readonly SubscribePending _wakeUpMessage;
-            /// <summary>
-            /// TBD
-            /// </summary>
-            protected override object WakeUpMessage => _wakeUpMessage;
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public sealed class BoundarySubscription : ISubscription
-        {
-            private readonly IActorRef _parent;
-            private readonly GraphInterpreterShell _shell;
-            private readonly int _id;
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="parent">TBD</param>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public BoundarySubscription(IActorRef parent, GraphInterpreterShell shell, int id)
-            {
-                _parent = parent;
-                _shell = shell;
-                _id = id;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="elements">TBD</param>
-            public void Request(long elements) => _parent.Tell(new RequestMore(_shell, _id, elements));
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public void Cancel() => _parent.Tell(new Cancel(_shell, _id));
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <returns>TBD</returns>
-            public override string ToString() => $"BoundarySubscription[{_parent}, {_id}]";
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <typeparam name="T">TBD</typeparam>
-        public sealed class BoundarySubscriber<T> : ISubscriber<T>
-        {
-            private readonly IActorRef _parent;
-            private readonly GraphInterpreterShell _shell;
-            private readonly int _id;
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="parent">TBD</param>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public BoundarySubscriber(IActorRef parent, GraphInterpreterShell shell, int id)
-            {
-                _parent = parent;
-                _shell = shell;
-                _id = id;
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="subscription">TBD</param>
-            public void OnSubscribe(ISubscription subscription)
-            {
-                ReactiveStreamsCompliance.RequireNonNullSubscription(subscription);
-                _parent.Tell(new OnSubscribe(_shell, _id, subscription));
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="cause">TBD</param>
-            public void OnError(Exception cause)
-            {
-                ReactiveStreamsCompliance.RequireNonNullException(cause);
-                _parent.Tell(new OnError(_shell, _id, cause));
-            }
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public void OnComplete() => _parent.Tell(new OnComplete(_shell, _id));
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="element">TBD</param>
-            public void OnNext(T element)
-            {
-                ReactiveStreamsCompliance.RequireNonNullElement(element);
-                _parent.Tell(new OnNext(_shell, _id, element));
-            }
-        }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public class BatchingActorInputBoundary : UpstreamBoundaryStageLogic
-        {
-            #region OutHandler
-            private sealed class OutHandler : Stage.OutHandler
-            {
-                private readonly BatchingActorInputBoundary _that;
-
-                public OutHandler(BatchingActorInputBoundary that) => _that = that;
-
-                public override void OnPull()
+                public OnErrorEvent(BatchingActorInputBoundary<T> boundary, Exception cause)
                 {
-                    var elementsCount = _that._inputBufferElements;
-                    var upstreamCompleted = _that._upstreamCompleted;
-                    if (elementsCount > 1) _that.Push(_that._outlet, _that.Dequeue());
-                    else if (elementsCount == 1)
-                    {
-                        if (upstreamCompleted)
-                        {
-                            _that.Push(_that._outlet, _that.Dequeue());
-                            _that.Complete(_that._outlet);
-                        }
-                        else _that.Push(_that._outlet, _that.Dequeue());
-                    }
-                    else if (upstreamCompleted) _that.Complete(_that._outlet);
+                    _boundary = boundary;
+                    _cause = cause;
+                    Shell = boundary._shell;
+                    Logic = boundary;
                 }
 
-                public override void OnDownstreamFinish() => _that.Cancel();
+                public override GraphInterpreterShell Shell { get; }
 
-                public override string ToString() => _that.ToString();
+                public override GraphStageLogic Logic { get; }
+
+                public override void Execute()
+                {
+#pragma warning disable 162
+                    // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                    if (IsDebug)
+                        // ReSharper disable once HeuristicUnreachableCode
+                        Console.WriteLine($"{Shell.Interpreter.Name} OnError port={_boundary._internalPortName}");
+#pragma warning restore 162
+
+                    _boundary.OnError(_cause);
+                }
             }
+
+            private sealed class OnCompletedEvent : SimpleBoundaryEvent
+            {
+                private readonly BatchingActorInputBoundary<T> _boundary;
+
+                public OnCompletedEvent(BatchingActorInputBoundary<T> boundary)
+                {
+                    _boundary = boundary;
+                    Shell = boundary._shell;
+                    Logic = boundary;
+                }
+
+                public override GraphInterpreterShell Shell { get; }
+
+                public override GraphStageLogic Logic { get; }
+
+                public override void Execute()
+                {
+                    // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                    if (IsDebug)
+#pragma warning disable 162
+                        // ReSharper disable once HeuristicUnreachableCode
+                        Console.WriteLine($"{Shell.Interpreter.Name} OnCompleted port={_boundary._internalPortName}");
+#pragma warning restore 162
+
+                    _boundary.OnComplete();
+                }
+            }
+
+            private sealed class OnNextEvent : SimpleBoundaryEvent
+            {
+                private readonly BatchingActorInputBoundary<T> _boundary;
+                private readonly T _element;
+
+                public OnNextEvent(BatchingActorInputBoundary<T> boundary, T element)
+                {
+                    _boundary = boundary;
+                    _element = element;
+                    Shell = boundary._shell;
+                    Logic = boundary;
+                }
+
+                public override GraphInterpreterShell Shell { get; }
+
+                public override GraphStageLogic Logic { get; }
+
+                public override void Execute()
+                {
+                    // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                    if (IsDebug)
+                        // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
+                        Console.WriteLine($"{Shell.Interpreter.Name} OnNext port={_boundary._internalPortName}");
+#pragma warning restore 162
+
+                    _boundary.OnNext(_element);
+                }
+            }
+
+            private sealed class OnSubscribeEvent : SimpleBoundaryEvent
+            {
+                private readonly BatchingActorInputBoundary<T> _boundary;
+                private readonly ISubscription _subscription;
+
+
+                public OnSubscribeEvent(BatchingActorInputBoundary<T> boundary, ISubscription subscription)
+                {
+                    _boundary = boundary;
+                    _subscription = subscription;
+                    Shell = boundary._shell;
+                    Logic = boundary;
+                }
+
+                public override GraphInterpreterShell Shell { get; }
+
+                public override GraphStageLogic Logic { get; }
+
+                public override void Execute()
+                {
+                    // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                    if (IsDebug)
+                        // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
+                        Console.WriteLine($"{Shell.Interpreter.Name} OnSubscribe port={_boundary._internalPortName}");
+#pragma warning restore 162
+
+                    Shell.SubscribeArrived();
+                    _boundary.OnSubscribe(_subscription);
+                }
+            }
+
             #endregion
 
-            private readonly int _size;
-            private readonly int _id;
+            private sealed class Subscription : ISubscriber<T>
+            {
+                private readonly BatchingActorInputBoundary<T> _boundary;
 
-            private readonly object[] _inputBuffer;
+                public Subscription(BatchingActorInputBoundary<T> boundary) => _boundary = boundary;
+
+                public void OnSubscribe(ISubscription subscription)
+                {
+                    ReactiveStreamsCompliance.RequireNonNullSubscription(subscription);
+                    _boundary.Actor.Tell(new OnSubscribeEvent(_boundary, subscription));
+                }
+
+                public void OnNext(T element)
+                {
+                    ReactiveStreamsCompliance.RequireNonNullElement(element);
+                    _boundary.Actor.Tell(new OnNextEvent(_boundary, element));
+                }
+
+                public void OnError(Exception cause)
+                {
+                    ReactiveStreamsCompliance.RequireNonNullException(cause);
+                    _boundary.Actor.Tell(new OnErrorEvent(_boundary, cause));
+                }
+
+                public void OnComplete() => _boundary.Actor.Tell(new OnCompletedEvent(_boundary));
+            }
+
+            private readonly int _size;
+
+            private readonly T[] _inputBuffer;
             private readonly int _indexMask;
+            private readonly Outlet<T> _outlet;
+            private readonly GraphInterpreterShell _shell;
+            private readonly IPublisher<T> _publisher;
+            private readonly string _internalPortName;
 
             private ISubscription _upstream;
             private int _inputBufferElements;
             private int _nextInputElementCursor;
             private bool _upstreamCompleted;
             private bool _downstreamCanceled;
-            private readonly int _requestBatchSize;
             private int _batchRemaining;
-            private readonly Outlet<object> _outlet;
+            private readonly int _requestBatchSize;
 
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="size">TBD</param>
-            /// <param name="id">TBD</param>
-            /// <exception cref="ArgumentException">TBD</exception>
-            public BatchingActorInputBoundary(int size, int id)
+            public BatchingActorInputBoundary(int size, GraphInterpreterShell shell, IPublisher<T> publisher, string internalPortName)
             {
-                if (size <= 0) throw new ArgumentException("Buffer size cannot be zero", nameof(size));
-                if ((size & (size - 1)) != 0) throw new ArgumentException("Buffer size must be power of two", nameof(size));
+                if (size <= 0) throw new ArgumentException("buffer size cannot be zero", nameof(size));
+                if ((size & (size - 1)) != 0) throw new ArgumentException("buffer size must be a power of two", nameof(size));
 
-                _size = size;
-                _id = id;
-                _inputBuffer = new object[size];
+                _size = size;  
+                _shell = shell;
+                _publisher = publisher;
+                _internalPortName = internalPortName;
+
                 _indexMask = size - 1;
-                _requestBatchSize = Math.Max(1, _inputBuffer.Length/2);
+                _inputBuffer = new T[size];
+                _requestBatchSize = Math.Max(1, size / 2);
                 _batchRemaining = _requestBatchSize;
-                _outlet = new Outlet<object>("UpstreamBoundary" + id) { Id = 0 };
 
-                SetHandler(_outlet, new OutHandler(this));
+                _outlet = new Outlet<T>("UpstreamBoundary: " + internalPortName);
+                SetHandler(_outlet, this);
             }
-
-            public BatchingActorInputBoundary(int size, GraphInterpreterShell shell, IPublisher<object> publisher, string toString)
-            {
-                throw new NotImplementedException();
-            }
-
+            
             /// <summary>
             /// TBD
             /// </summary>
             public override Outlet Out => _outlet;
+
+            public IActorRef Actor { get; set; } = ActorRefs.NoSender;
+
+            public override void PreStart() => _publisher.Subscribe(new Subscription(this));
+            
+            public void OnPull()
+            {
+                var elementsCount = _inputBufferElements;
+                var upstreamCompleted = _upstreamCompleted;
+                if (elementsCount > 1) Push(_outlet, Dequeue());
+                else if (elementsCount == 1)
+                {
+                    if (upstreamCompleted)
+                    {
+                        Push(_outlet, Dequeue());
+                        Complete(_outlet);
+                    }
+                    else Push(_outlet, Dequeue());
+                }
+                else if (upstreamCompleted) Complete(_outlet);
+            }
+
+            public void OnDownstreamFinish() => Cancel();
 
             // Call this when an error happens that does not come from the usual onError channel
             // (exceptions while calling RS interfaces, abrupt termination etc)
@@ -992,8 +294,8 @@ namespace Akka.Streams.Implementation.Fusing
             /// <param name="reason">TBD</param>
             public void OnInternalError(Exception reason)
             {
-                if (!(_upstreamCompleted || _downstreamCanceled) && !ReferenceEquals(_upstream, null))
-                    _upstream.Cancel();
+                if (!(_upstreamCompleted || _downstreamCanceled))
+                    _upstream?.Cancel();
 
                 if (!IsClosed(_outlet))
                     OnError(reason);
@@ -1053,7 +355,7 @@ namespace Akka.Streams.Implementation.Fusing
             /// </summary>
             /// <param name="element">TBD</param>
             /// <exception cref="IllegalStateException">TBD</exception>
-            public void OnNext(object element)
+            public void OnNext(T element)
             {
                 if (!_upstreamCompleted)
                 {
@@ -1081,12 +383,12 @@ namespace Akka.Streams.Implementation.Fusing
                 }
             }
 
-            private object Dequeue()
+            private T Dequeue()
             {
                 var element = _inputBuffer[_nextInputElementCursor];
                 if (element == null)
                     throw new IllegalStateException("Internal queue must never contain a null");
-                _inputBuffer[_nextInputElementCursor] = null;
+                _inputBuffer[_nextInputElementCursor] = default(T);
 
                 _batchRemaining--;
                 if (_batchRemaining == 0 && !_upstreamCompleted)
@@ -1110,37 +412,201 @@ namespace Akka.Streams.Implementation.Fusing
             /// TBD
             /// </summary>
             /// <returns>TBD</returns>
-            public override string ToString() => $"BatchingActorInputBoundary(id={_id}, fill={_inputBufferElements}/{_size}, completed={_upstreamCompleted}, canceled={_downstreamCanceled})";
+            public override string ToString() => $"BatchingActorInputBoundary(forPort={_internalPortName}, fill={_inputBufferElements}/{_size}, completed={_upstreamCompleted}, canceled={_downstreamCanceled})";
+           
         }
+
+        private sealed class SubscribePending<T> : SimpleBoundaryEvent
+        {
+            private readonly ActorOutputBoundary<T> _boundary;
+
+            public SubscribePending(ActorOutputBoundary<T> boundary)
+            {
+                _boundary = boundary;
+                Shell = boundary.Shell;
+                Logic = boundary;
+            }
+
+            public override GraphInterpreterShell Shell { get; }
+            public override GraphStageLogic Logic { get; }
+            public override void Execute() => _boundary.SubscribePending();
+        }
+
+        private sealed class RequestMore<T> : SimpleBoundaryEvent
+        {
+            private readonly ActorOutputBoundary<T> _boundary;
+            private readonly long _demand;
+
+            public RequestMore(ActorOutputBoundary<T> boundary, long demand)
+            {
+                _boundary = boundary;
+                _demand = demand;
+                Shell = boundary.Shell;
+                Logic = boundary;
+            }
+
+            public override GraphInterpreterShell Shell { get; }
+            public override GraphStageLogic Logic { get; }
+            public override void Execute()
+            {
+                // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                if(IsDebug)
+                    // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
+                    Console.WriteLine($"{_boundary.Shell.Interpreter.Name} request {_demand} port={_boundary.InternalPortName}");
+#pragma warning restore 162
+
+                _boundary.RequestMore(_demand);
+            }
+        }
+
+        private sealed class Cancel<T> : SimpleBoundaryEvent
+        {
+            private readonly ActorOutputBoundary<T> _boundary;
+
+            public Cancel(ActorOutputBoundary<T> boundary)
+            {
+                _boundary = boundary;
+                Shell = boundary.Shell;
+                Logic = boundary;
+            }
+
+            public override GraphInterpreterShell Shell { get; }
+            public override GraphStageLogic Logic { get; }
+            public override void Execute()
+            {
+                // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                if (IsDebug)
+                    // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
+                    Console.WriteLine($"{_boundary.Shell.Interpreter.Name} cancel port={_boundary.InternalPortName}");
+#pragma warning restore 162
+
+                _boundary.Cancel();
+            }
+        }
+
+        private sealed class OutputBoundaryPublisher<T> : IPublisher<T>
+        {
+            private readonly ActorOutputBoundary<T> _boundary;
+            private readonly string _internalPortName;
+            private readonly AtomicReference<ImmutableList<ISubscriber<T>>> _pendingSubscribers = new AtomicReference<ImmutableList<ISubscriber<T>>>();
+            private Exception _shutdownReason;
+
+            public OutputBoundaryPublisher(ActorOutputBoundary<T> boundary, string internalPortName)
+            {
+                _boundary = boundary;
+                _internalPortName = internalPortName;
+                WakeUpMessage = new SubscribePending<T>(boundary);
+            }
+
+            private SubscribePending<T> WakeUpMessage { get; }
+
+            public void Subscribe(ISubscriber<T> subscriber)
+            {
+                ReactiveStreamsCompliance.RequireNonNullSubscriber(subscriber);
+
+
+                while (true)
+                {
+                    var current = _pendingSubscribers.Value;
+
+                    if (current == null)
+                        ReportSubscribeFailure(subscriber);
+                    else
+                    {
+                        if (_pendingSubscribers.CompareAndSet(current, current.Add(subscriber)))
+                            _boundary.StageActor?.Ref.Tell(WakeUpMessage);
+                        else
+                            continue;
+                    }
+
+                    break;
+                }
+            }
+
+            public ImmutableList<ISubscriber<T>> TakePendingSubscribers()
+            {
+                var pending = _pendingSubscribers.GetAndSet(null);
+                return pending == null ? ImmutableList<ISubscriber<T>>.Empty : pending.Reverse();
+            }
+
+            public void Shutdown(Exception reason)
+            {
+                _shutdownReason = reason;
+
+                var pending = _pendingSubscribers.GetAndSet(null);
+                if (pending != null)
+                {
+                    foreach (var subscriber in pending)
+                        ReportSubscribeFailure(subscriber);
+                }
+                else
+                {
+                    // already canceled earlier
+                }
+            }
+
+            private void ReportSubscribeFailure(ISubscriber<T> subscriber)
+            {
+                try
+                {
+                    switch (_shutdownReason)
+                    {
+                        case ISpecViolation _:
+                            // ok, not allowed to call OnError
+                            break;
+                        case Exception e:
+                            ReactiveStreamsCompliance.TryOnSubscribe(subscriber, CancelledSubscription.Instance);
+                            ReactiveStreamsCompliance.TryOnError(subscriber, e);
+                            break;
+                        case null:
+                            ReactiveStreamsCompliance.TryOnSubscribe(subscriber, CancelledSubscription.Instance);
+                            ReactiveStreamsCompliance.TryOnComplete(subscriber);
+                            break;
+                    }
+                }
+                catch (Exception e) 
+                {
+                    if (e is ISpecViolation)
+                    {
+                        // nothing to do
+                    }
+                    else
+                        throw;
+                }
+            }
+
+            public override string ToString() => $"Pubsliher[{_internalPortName}]";
+        }
+
+
+
+        #region internal classes
+
 
         /// <summary>
         /// TBD
         /// </summary>
         internal interface IActorOutputBoundary
         {
-            /// <summary>
-            /// TBD
-            /// </summary>
+            IActorRef Actor { get; set; }
+
             void SubscribePending();
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="publisher">TBD</param>
-            void ExposedPublisher(IActorPublisher publisher);
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="elements">TBD</param>
+
             void RequestMore(long elements);
-            /// <summary>
-            /// TBD
-            /// </summary>
+
             void Cancel();
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="reason">TBD</param>
+
             void Fail(Exception reason);
+        }
+
+        internal interface IActorInputBoundary
+        {
+            IActorRef Actor { get; set; }
+
+            void OnInternalError(Exception exception);
+            void Cancel();
         }
 
         /// <summary>
@@ -1173,41 +639,27 @@ namespace Akka.Streams.Implementation.Fusing
             }
             #endregion
 
-            private readonly IActorRef _actor;
-            private readonly GraphInterpreterShell _shell;
-            private readonly int _id;
+            internal readonly GraphInterpreterShell Shell;
+            internal readonly string InternalPortName;
 
-            private ActorPublisher<T> _exposedPublisher;
             private ISubscriber<T> _subscriber;
             private long _downstreamDemand;
 
             // This flag is only used if complete/fail is called externally since this op turns into a Finished one inside the
             // interpreter (i.e. inside this op this flag has no effects since if it is completed the op will not be invoked)
             private bool _downstreamCompleted;
-            // when upstream failed before we got the exposed publisher
-            private Exception _upstreamFailed;
             private bool _upstreamCompleted;
             private readonly Inlet<T> _inlet;
+            private readonly OutputBoundaryPublisher<T> _publisher;
 
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="actor">TBD</param>
-            /// <param name="shell">TBD</param>
-            /// <param name="id">TBD</param>
-            public ActorOutputBoundary(IActorRef actor, GraphInterpreterShell shell, int id)
+            public ActorOutputBoundary( GraphInterpreterShell shell, string internalPortName)
             {
-                _actor = actor;
-                _shell = shell;
-                _id = id;
-
-                _inlet = new Inlet<T>("UpstreamBoundary" + id) { Id = 0 };
+                Shell = shell;
+                InternalPortName = internalPortName;
+                _publisher = new OutputBoundaryPublisher<T>(this, internalPortName);
+                Publisher = _publisher;
+                _inlet = new Inlet<T>("UpstreamBoundary: " + internalPortName) { Id = 0 };
                 SetHandler(_inlet, new InHandler(this));
-            }
-
-            public ActorOutputBoundary(GraphInterpreterShell shell, string toString)
-            {
-                throw new NotImplementedException();
             }
 
             /// <summary>
@@ -1215,7 +667,9 @@ namespace Akka.Streams.Implementation.Fusing
             /// </summary>
             public override Inlet In => _inlet;
 
-            public IPublisher<object> Publisher { get; set; }
+            public IPublisher<T> Publisher { get; }
+
+            public IActorRef Actor { get; set; }
 
             /// <summary>
             /// TBD
@@ -1225,7 +679,7 @@ namespace Akka.Streams.Implementation.Fusing
             {
                 if (elements < 1)
                 {
-                    Cancel((Inlet<T>) In);
+                    Cancel(_inlet);
                     Fail(ReactiveStreamsCompliance.NumberOfElementsInRequestMustBePositiveException);
                 }
                 else
@@ -1243,35 +697,36 @@ namespace Akka.Streams.Implementation.Fusing
             /// </summary>
             public void SubscribePending()
             {
-                foreach (var subscriber in _exposedPublisher.TakePendingSubscribers())
+                foreach (var subscriber in _publisher.TakePendingSubscribers())
                 {
                     if (ReferenceEquals(_subscriber, null))
                     {
                         _subscriber = subscriber;
-                        ReactiveStreamsCompliance.TryOnSubscribe(_subscriber, new BoundarySubscription(_actor, _shell, _id));
+                        var subscription = new Subscription(this);
+
+                        ReactiveStreamsCompliance.TryOnSubscribe(_subscriber, subscription);
+                        // ReSharper disable once ConditionIsAlwaysTrueOrFalse
                         if (IsDebug)
+                            // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
                             Console.WriteLine($"{Interpreter.Name} Subscribe subscriber={subscriber}");
+#pragma warning restore 162
                     }
                     else ReactiveStreamsCompliance.RejectAdditionalSubscriber(subscriber, GetType().FullName);
                 }
             }
 
-            void IActorOutputBoundary.ExposedPublisher(IActorPublisher publisher) => ExposedPublisher((ActorPublisher<T>) publisher);
-
-            /// <summary>
-            /// TBD
-            /// </summary>
-            /// <param name="publisher">TBD</param>
-            public void ExposedPublisher(ActorPublisher<T> publisher)
+            private sealed class Subscription : ISubscription
             {
-                _exposedPublisher = publisher;
-                if (_upstreamFailed != null)
-                    publisher.Shutdown(_upstreamFailed);
-                else
-                {
-                    if (_upstreamCompleted)
-                        publisher.Shutdown(null);
-                }
+                private readonly ActorOutputBoundary<T> _boundary;
+
+                public Subscription(ActorOutputBoundary<T> boundary) => _boundary = boundary;
+
+                public void Cancel() => _boundary.Actor.Tell(new Cancel<T>(_boundary));
+
+                public void Request(long n) => _boundary.Actor.Tell(new RequestMore<T>(_boundary, n));
+
+                public override string ToString() => $"BoundarySubscription[{_boundary.Actor}, {_boundary.InternalPortName}]";
             }
 
             /// <summary>
@@ -1281,7 +736,7 @@ namespace Akka.Streams.Implementation.Fusing
             {
                 _downstreamCompleted = true;
                 _subscriber = null;
-                _exposedPublisher.Shutdown(new NormalShutdownException("UpstreamBoundary"));
+                _publisher.Shutdown(new NormalShutdownException("UpstreamBoundary"));
                 Cancel(_inlet);
             }
 
@@ -1295,10 +750,7 @@ namespace Akka.Streams.Implementation.Fusing
                 if (!(_downstreamCompleted || _upstreamCompleted))
                 {
                     _upstreamCompleted = true;
-                    _upstreamFailed = reason;
-
-                    if (!ReferenceEquals(_exposedPublisher, null))
-                        _exposedPublisher.Shutdown(reason);
+                    _publisher.Shutdown(reason);
                     if (!ReferenceEquals(_subscriber, null) && !(reason is ISpecViolation))
                         ReactiveStreamsCompliance.TryOnError(_subscriber, reason);
                 }
@@ -1316,8 +768,7 @@ namespace Akka.Streams.Implementation.Fusing
                 if (!(_upstreamCompleted || _downstreamCompleted))
                 {
                     _upstreamCompleted = true;
-                    if (!ReferenceEquals(_exposedPublisher, null))
-                        _exposedPublisher.Shutdown(null);
+                    _publisher.Shutdown(null);
                     if (!ReferenceEquals(_subscriber, null))
                         ReactiveStreamsCompliance.TryOnComplete(_subscriber);
                 }
@@ -1325,6 +776,327 @@ namespace Akka.Streams.Implementation.Fusing
         }
 
         #endregion
+        /// <summary>
+        /// INTERNAL API
+        /// </summary>
+        [InternalApi]
+        public sealed class GraphInterpreterShell
+        {
+            private sealed class AsyncInput : IBoundaryEvent
+            {
+                private readonly GraphStageLogic _logic;
+                private readonly object _e;
+                private readonly Action<object> _handler;
+
+                public AsyncInput(GraphInterpreterShell shell, GraphStageLogic logic, object e, Action<object> handler)
+                {
+                    _logic = logic;
+                    _e = e;
+                    _handler = handler;
+                    Shell = shell;
+                }
+
+                public GraphInterpreterShell Shell { get; }
+
+                public int Execute(int eventLimit)
+                {
+                    if (!Shell._waitingForShutdown)
+                    {
+                        Shell.Interpreter.RunAsyncInput(_logic, _e, _handler);
+                        if (eventLimit == 1 && Shell.Interpreter.IsSuspended)
+                        {
+                            Shell.SendResume(true);
+                            return 0;
+                        }
+
+                        return Shell.RunBatch(eventLimit - 1);
+                    }
+
+                    return eventLimit;
+                }
+            }
+
+            internal sealed class ResumeShell : IBoundaryEvent
+            {
+                public ResumeShell(GraphInterpreterShell shell) => Shell = shell;
+
+                public GraphInterpreterShell Shell { get; }
+
+                public int Execute(int eventLimit)
+                {
+                    if (!Shell._waitingForShutdown)
+                    {
+                        // ReSharper disable once ConditionIsAlwaysTrueOrFalse
+                        if(IsDebug)
+                            // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
+                            Console.WriteLine($"{Shell.Interpreter.Name} resume");
+#pragma warning restore 162
+
+                        if (Shell.Interpreter.IsSuspended)
+                            return Shell.RunBatch(eventLimit);
+                        return eventLimit;
+                    }
+                    
+                    return eventLimit;
+                }
+            }
+
+            private sealed class Abort : IBoundaryEvent
+            {
+                public Abort(GraphInterpreterShell shell) => Shell = shell;
+
+                public GraphInterpreterShell Shell { get; }
+
+                public int Execute(int eventLimit)
+                {
+                    if (Shell._waitingForShutdown)
+                    {
+                        Shell._subscribersPending = 0;
+                        Shell.TryAbort(new TimeoutException("Streaming actor has been already stopped processing (normally), but not all of its " +
+                                                            $"inputs or outputs have been subscribed in {Shell._settings.SubscriptionTimeoutSettings.Timeout}. Aborting actor now."));
+                    }
+
+                    return 0;
+                }
+            }
+
+            private readonly Connection[] _connections;
+            private readonly GraphStageLogic[] _logics;
+            private readonly ActorMaterializerSettings _settings;
+            /// <summary>
+            /// TBD
+            /// </summary>
+            internal readonly ExtendedActorMaterializer Materializer;
+
+            /// <summary>
+            /// Limits the number of events processed by the interpreter before scheduling
+            /// a self-message for fairness with other actors. The basic assumption here is
+            /// to give each input buffer slot a chance to run through the whole pipeline
+            /// and back (for the elements).
+            /// 
+            /// Considered use case:
+            ///  - assume a composite Sink of one expand and one fold 
+            ///  - assume an infinitely fast source of data
+            ///  - assume maxInputBufferSize == 1
+            ///  - if the event limit is greater than maxInputBufferSize * (ins + outs) than there will always be expand activity
+            ///  because no data can enter "fast enough" from the outside
+            /// </summary>
+            private readonly int _shellEventLimit;
+
+            // Limits the number of events processed by the interpreter on an abort event.
+            private readonly int _abortLimit;
+            private readonly List<IActorInputBoundary> _inputs = new List<IActorInputBoundary>();
+            private readonly List<IActorOutputBoundary> _outputs = new List<IActorOutputBoundary>();
+
+            private ILoggingAdapter _log;
+            private GraphInterpreter _interpreter;
+            private int _subscribersPending;
+            private bool _resumeScheduled;
+            private bool _waitingForShutdown;
+            private Action<object> _enqueueToShortCircuit;
+            private bool _interpreterCompleted;
+            private readonly ResumeShell _resume;
+
+            /// <summary>
+            /// TBD
+            /// </summary>
+            /// <param name="connections">TBD</param>
+            /// <param name="logics">TBD</param>
+            /// <param name="settings">TbD</param>
+            /// <param name="materializer">TBD</param>
+            public GraphInterpreterShell(Connection[] connections, GraphStageLogic[] logics, ActorMaterializerSettings settings, ExtendedActorMaterializer materializer)
+            {
+                _connections = connections;
+                _logics = logics;
+                _settings = settings;
+                Materializer = materializer;
+                
+                _shellEventLimit = settings.MaxInputBufferSize * 16;
+                _abortLimit = _shellEventLimit * 2;
+
+                _resume = new ResumeShell(this);
+            }
+
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public bool IsInitialized => Self != null;
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public bool IsTerminated => _interpreterCompleted && CanShutdown;
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public bool CanShutdown => _subscribersPending == 0;
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public IActorRef Self { get; private set; }
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public ILoggingAdapter Log => _log ?? (_log = GetLogger());
+            /// <summary>
+            /// TBD
+            /// </summary>
+            public GraphInterpreter Interpreter => _interpreter ?? (_interpreter = GetInterpreter());
+
+            public Connection[] Connections { get; set; }
+            public GraphStageLogic[] Logics { get; set; }
+
+            /// <summary>
+            /// TBD
+            /// </summary>
+            /// <param name="self">TBD</param>
+            /// <param name="subMat">TBD</param>
+            /// <param name="enqueueToShourtCircuit">TBD</param>
+            /// <param name="eventLimit">TBD</param>
+            /// <returns>TBD</returns>
+            public int Init(IActorRef self, SubFusingActorMaterializerImpl subMat, Action<object> enqueueToShourtCircuit, int eventLimit)
+            {
+                Self = self;
+                _enqueueToShortCircuit = enqueueToShourtCircuit;
+
+                foreach (var logic in _logics)
+                {
+                    switch (logic)
+                    {
+                        case IActorInputBoundary input:
+                            input.Actor = Self;
+                            _subscribersPending++;
+                            _inputs.Add(input);
+                            break;
+                        case IActorOutputBoundary output:
+                            output.Actor = Self;
+                            output.SubscribePending();
+                            _outputs.Add(output);
+                            break;
+                    }
+                }
+                
+                Interpreter.Init(subMat);
+                return RunBatch(eventLimit);
+            }
+
+            /// <summary>
+            /// TBD
+            /// </summary>
+            /// <param name="e">TBD</param>
+            /// <param name="eventLimit">TBD</param>
+            /// <returns>TBD</returns>
+            public int ProcessEvents(IBoundaryEvent e, int eventLimit)
+            {
+                _resumeScheduled = false;
+                return e.Execute(eventLimit);
+            }
+
+            /**
+             * Attempts to abort execution, by first propagating the reason given until either
+             *  - the interpreter successfully finishes
+             *  - the event limit is reached
+             *  - a new error is encountered
+             */
+            /// <summary>
+            /// TBD
+            /// </summary>
+            /// <param name="reason">TBD</param>
+            /// <exception cref="IllegalStateException">TBD</exception>
+            /// <returns>TBD</returns>
+            public void TryAbort(Exception reason)
+            {
+                var ex = reason is ISpecViolation
+                    ? new IllegalStateException("Shutting down because of violation of the Reactive Streams specification",
+                        reason)
+                    : reason;
+
+                // This should handle termination while interpreter is running. If the upstream have been closed already this
+                // call has no effect and therefore does the right thing: nothing.
+                try
+                {
+                    foreach (var input in _inputs)
+                        input.OnInternalError(ex);
+
+                    Interpreter.Execute(_abortLimit);
+                    Interpreter.Finish();
+                }
+                catch (Exception) { /* swallow? */ }
+                finally
+                {
+                    _interpreterCompleted = true;
+                    // Will only have an effect if the above call to the interpreter failed to emit a proper failure to the downstream
+                    // otherwise this will have no effect
+                    foreach (var output in _outputs)
+                        output.Fail(ex);
+                    foreach (var input in _inputs)
+                        input.Cancel();
+                }
+            }
+
+            internal int RunBatch(int actorEventLimit)
+            {
+                try
+                {
+                    var usingShellLimit = _shellEventLimit < actorEventLimit;
+                    var remainingQuota = _interpreter.Execute(Math.Min(actorEventLimit, _shellEventLimit));
+
+                    if (Interpreter.IsCompleted)
+                    {
+                        // Cannot stop right away if not completely subscribed
+                        if (CanShutdown)
+                            _interpreterCompleted = true;
+                        else
+                        {
+                            _waitingForShutdown = true;
+                            Materializer.ScheduleOnce(_settings.SubscriptionTimeoutSettings.Timeout,
+                                () => Self.Tell(new Abort(this)));
+                        }
+                    }
+                    else if (Interpreter.IsSuspended && !_resumeScheduled)
+                        SendResume(!usingShellLimit);
+
+                    return usingShellLimit ? actorEventLimit - _shellEventLimit + remainingQuota : remainingQuota;
+                }
+                catch (Exception reason)
+                {
+                    TryAbort(reason);
+                    return actorEventLimit - 1;
+                }
+            }
+
+            private void SendResume(bool sendResume)
+            {
+                _resumeScheduled = true;
+                if (sendResume)
+                    Self.Tell(_resume);
+                else
+                    _enqueueToShortCircuit(_resume);
+            }
+
+            private GraphInterpreter GetInterpreter()
+            {
+                return new GraphInterpreter(Materializer, Log, _logics, _connections,
+                    (logic, @event, handler) =>
+                    {
+                        var asyncInput = new AsyncInput(this, logic, @event, handler);
+                        var currentInterpreter = CurrentInterpreterOrNull;
+                        if (currentInterpreter == null || !Equals(currentInterpreter.Context, Self))
+                            Self.Tell(new AsyncInput(this, logic, @event, handler));
+                        else
+                            _enqueueToShortCircuit(asyncInput);
+                    }, _settings.IsFuzzingMode, Self);
+            }
+
+            private BusLogging GetLogger()
+            {
+                return new BusLogging(Materializer.System.EventStream, Self.ToString(), typeof(GraphInterpreterShell), new DefaultLogMessageFormatter());
+            }
+
+            public void SubscribeArrived() => _subscribersPending--;
+
+            public override string ToString() => "GraphInterpreterShell\n";
+        }
 
         /// <summary>
         /// TBD
@@ -1375,8 +1147,12 @@ namespace Akka.Streams.Implementation.Fusing
             try
             {
                 _currentLimit = shell.Init(Self, _subFusingMaterializerImpl, EnqueueToShortCircuit, _currentLimit);
+                // ReSharper disable once ConditionIsAlwaysTrueOrFalse
                 if (IsDebug)
+                    // ReSharper disable once HeuristicUnreachableCode
+#pragma warning disable 162
                     Console.WriteLine($"registering new shell in {_initial}\n  {shell.ToString().Replace("\n", "\n  ")}");
+#pragma warning restore 162
                 if (shell.IsTerminated)
                     return false;
                 _activeInterpreters.Add(shell);
@@ -1398,7 +1174,7 @@ namespace Akka.Streams.Implementation.Fusing
         public IActorRef RegisterShell(GraphInterpreterShell shell)
         {
             _newShells.Enqueue(shell);
-            EnqueueToShortCircuit(ShellRegistered.Instance);
+            EnqueueToShortCircuit(new GraphInterpreterShell.ResumeShell(shell));
             return Self;
         }
 
@@ -1446,12 +1222,12 @@ namespace Akka.Streams.Implementation.Fusing
                 var element = _shortCircuitBuffer.Dequeue();
                 if (element is IBoundaryEvent boundary)
                     ProcessEvent(boundary);
-                else if (element is ShellRegistered)
+                else if (element is ResumeActor)
                     FinishShellRegistration();
             }
 
             if(_shortCircuitBuffer.Count != 0 && _currentLimit == 0)
-                Self.Tell(ShellRegistered.Instance);
+                Self.Tell(ResumeActor.Instance);
         }
 
         private void ProcessEvent(IBoundaryEvent b)
@@ -1461,7 +1237,7 @@ namespace Akka.Streams.Implementation.Fusing
             {
                 try
                 {
-                    _currentLimit = shell.Receive(b, _currentLimit);
+                    _currentLimit = shell.ProcessEvents(b, _currentLimit);
                 }
                 catch (Exception ex)
                 {
@@ -1492,7 +1268,7 @@ namespace Akka.Streams.Implementation.Fusing
                     if (_shortCircuitBuffer != null)
                         ShortCircuitBatch();
                     return true;
-                case ShellRegistered _:
+                case ResumeActor _:
                     _currentLimit = _eventLimit;
                     if (_shortCircuitBuffer != null)
                         ShortCircuitBatch();

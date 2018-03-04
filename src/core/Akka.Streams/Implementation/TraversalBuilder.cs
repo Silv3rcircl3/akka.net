@@ -13,7 +13,6 @@ using System.Diagnostics;
 using System.Linq;
 using Akka.Pattern;
 using Akka.Streams.Dsl;
-using Akka.Streams.Implementation.Fusing;
 using Akka.Streams.Util;
 
 namespace Akka.Streams.Implementation
@@ -224,7 +223,7 @@ namespace Akka.Streams.Implementation
 
     static class TraversalBuilder
     {
-        private static readonly ITraversalBuilder CachedEmptyCompleted =
+        private static readonly CompletedTraversalBuilder CachedEmptyCompleted =
             new CompletedTraversalBuilder(PushNotUsed.Instance, 0, ImmutableDictionary<InPort, int>.Empty, Attributes.None);
 
         /// <summary>
@@ -241,7 +240,7 @@ namespace Akka.Streams.Implementation
                 shape.Outlets[i].Id = i;
         }
 
-        public static ITraversalBuilder Empty(Attributes attributes = null)
+        public static CompletedTraversalBuilder Empty(Attributes attributes = null)
         {
             if (attributes == null || attributes == Attributes.None)
                 return CachedEmptyCompleted;
@@ -479,7 +478,7 @@ namespace Akka.Streams.Implementation
                 : new PushAttributes(attributes).Concat(traversalSoFar).Concat(PopAttributes.Instance);
         }
 
-        public ITraversalBuilder Add<TMat, TMat1, TMat2>(ITraversalBuilder submodule, Shape shape, Func<TMat, TMat1, TMat2> combineMaterialized)
+        public ITraversalBuilder Add(ITraversalBuilder submodule, Shape shape)
         {
             var key = new BuilderKey();
             return new CompositeTraversalBuilder(
@@ -489,6 +488,11 @@ namespace Akka.Streams.Implementation
                 pendingBuilders: ImmutableDictionary<BuilderKey, ITraversalBuilder>.Empty.Add(key, this),
                 attributes: Attributes
             );
+        }
+
+        public ITraversalBuilder Add<TMat, TMat1, TMat2>(ITraversalBuilder submodule, Shape shape, Func<TMat, TMat1, TMat2> combineMaterialized)
+        {
+            return Add(submodule, shape);
         }
 
         public ITraversalBuilder TransformMataterialized<TMat, TMat1>(Func<TMat, TMat1> mapper)
@@ -558,7 +562,7 @@ namespace Akka.Streams.Implementation
 
         public ITraversalBuilder TransformMataterialized<T1, T2>(Func<T1, T2> mapper) =>
             TraversalBuilder.Empty()
-                .Add<T1, T2, T2>(this, _module.Shape, Keep.Right)
+                .Add(this, _module.Shape)
                 .TransformMataterialized(mapper);
 
         public ITraversalBuilder SetAttributes(Attributes attributes) =>
@@ -609,7 +613,7 @@ namespace Akka.Streams.Implementation
 
         public ITraversalBuilder MakeIsland(IslandTag islandTag) =>
             TraversalBuilder.Empty()
-                .Add<object, object, object>(this, _module.Shape, Keep.Right)
+                .Add(this, _module.Shape)
                 .MakeIsland(islandTag);
     }
 
@@ -621,7 +625,7 @@ namespace Akka.Streams.Implementation
     /// in a fixed location, therefore the last step of the Traversal might need to be changed in those cases from the
     /// -1 relative offset to something else (see rewireLastOutTo).
     /// </summary>
-    internal sealed class LinearTraversalBuilder : ITraversalBuilder
+    public sealed class LinearTraversalBuilder : ITraversalBuilder
     {
         private static readonly LinearTraversalBuilder CachedEmptyLinear =
             new LinearTraversalBuilder(Option<InPort>.None, Option<OutPort>.None, 0, 0, PushNotUsed.Instance,
@@ -817,7 +821,12 @@ namespace Akka.Streams.Implementation
         /// <summary>
         /// Wraps the builder in an island that can be materialized differently, using async boundaries to bridge between islands.
         /// </summary>
-        public ITraversalBuilder MakeIsland(IslandTag islandTag)
+        ITraversalBuilder ITraversalBuilder.MakeIsland(IslandTag islandTag) => MakeIsland(islandTag);
+
+        /// <summary>
+        /// Wraps the builder in an island that can be materialized differently, using async boundaries to bridge between islands.
+        /// </summary>
+        public LinearTraversalBuilder MakeIsland(IslandTag islandTag)
         {
             return new LinearTraversalBuilder(_inPort, _outPort, _inOffset, InSlots,
                 new EnterIsland(islandTag, _traversalSoFar), _pendingBuilder, Attributes,
@@ -840,11 +849,15 @@ namespace Akka.Streams.Implementation
             throw new ArgumentException($"Port {@out} cannot be accessed in this builder", nameof(@out));
         }
 
-        public ITraversalBuilder SetAttributes(Attributes attributes) =>
+        ITraversalBuilder ITraversalBuilder.SetAttributes(Attributes attributes) => SetAttributes(attributes);
+
+        public LinearTraversalBuilder SetAttributes(Attributes attributes) =>
             new LinearTraversalBuilder(_inPort, _outPort, _inOffset, InSlots, _traversalSoFar, _pendingBuilder,
                 attributes, _beforeBuilder);
 
-        public ITraversalBuilder TransformMataterialized<TMat, TMat1>(Func<TMat, TMat1> mapper)
+        ITraversalBuilder ITraversalBuilder.TransformMataterialized<TMat, TMat1>(Func<TMat, TMat1> mapper) => TransformMataterialized(mapper);
+
+        public LinearTraversalBuilder TransformMataterialized<TMat, TMat1>(Func<TMat, TMat1> mapper)
         {
             return new LinearTraversalBuilder(_inPort, _outPort, _inOffset, InSlots,
                 _traversalSoFar.Concat(new Transform(o => mapper((TMat)o) as object)), _pendingBuilder, Attributes,

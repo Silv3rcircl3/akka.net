@@ -29,7 +29,7 @@ namespace Akka.Streams.Implementation.Fusing
         /// </summary>
         /// <typeparam name="T">TBD</typeparam>
         /// <returns>TBD</returns>
-        public static SimpleLinearGraphStage<T> Identity<T>() => Implementation.Fusing.Identity<T>.Instance;
+        public static SimpleLinearGraphStage<T> Identity<T>() => Fusing.Identity<T>.Instance;
 
         /// <summary>
         /// TBD
@@ -70,12 +70,12 @@ namespace Akka.Streams.Implementation.Fusing
     /// INTERNAL API
     /// </summary>
     [InternalApi]
-    public class GraphStageModule : IAtomicModule<Shape>
+    public class GraphStageModule<TMat> : IAtomicModuleWithMaterializedValue<Shape, TMat>
     {
         /// <summary>
         /// TBD
         /// </summary>
-        public readonly IGraphStageWithMaterializedValue<Shape, object> Stage;
+        public readonly IGraphStageWithMaterializedValue<Shape, TMat> Stage;
 
         /// <summary>
         /// TBD
@@ -83,15 +83,20 @@ namespace Akka.Streams.Implementation.Fusing
         /// <param name="shape">TBD</param>
         /// <param name="attributes">TBD</param>
         /// <param name="stage">TBD</param>
-        public GraphStageModule(Shape shape, Attributes attributes, IGraphStageWithMaterializedValue<Shape, object> stage)
+        public GraphStageModule(Shape shape, Attributes attributes, IGraphStageWithMaterializedValue<Shape, TMat> stage)
+            : this(shape, attributes, stage, null)
+        {
+        }
+
+        private GraphStageModule(Shape shape, Attributes attributes,
+            IGraphStageWithMaterializedValue<Shape, TMat> stage, ITraversalBuilder builder)
         {
             Shape = shape;
             Attributes = attributes;
             Stage = stage;
 
-            Builder = LinearTraversalBuilder.FromModule(this);
+            Builder = builder ?? LinearTraversalBuilder.FromModule(this);
         }
-
 
         public Shape Shape { get; }
 
@@ -107,6 +112,17 @@ namespace Akka.Streams.Implementation.Fusing
         /// </summary>
         /// <returns>TBD</returns>
         public override string ToString() => $"GraphStage({Stage}) [{GetHashCode()}%08x]";
+
+        public IGraph<Shape, TMat> WithAttributes(Attributes attributes) => attributes == Attributes
+            ? this
+            : new GraphStageModule<TMat>(Shape, attributes, Stage);
+
+        public IGraph<Shape, TMat> AddAttributes(Attributes attributes) => WithAttributes(Attributes.And(attributes));
+
+        public IGraph<Shape, TMat> Named(string name) => AddAttributes(Attributes.CreateName(name));
+
+        public IGraph<Shape, TMat> Async() =>
+            new GraphStageModule<TMat>(Shape, Attributes, Stage, Builder.MakeIsland(IslandTag.GraphStage));
     }
 
     /// <summary>

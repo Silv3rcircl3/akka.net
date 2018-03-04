@@ -44,7 +44,7 @@ namespace Akka.Streams.Dsl
             var shape = new SourceShape<ByteString>(new Outlet<ByteString>("InputStreamSource"));
             var streamSource = new InputStreamSource(createInputStream, chunkSize, DefaultAttributes.InputStreamSource,
                 shape);
-            return new Source<ByteString, Task<IOResult>>(streamSource);
+            return Source.FromGraph(streamSource);
         }
 
         /// <summary>
@@ -85,7 +85,7 @@ namespace Akka.Streams.Dsl
             var shape = new SinkShape<ByteString>(new Inlet<ByteString>("OutputStreamSink"));
             var streamSink = new OutputStreamSink(createOutputStream, DefaultAttributes.OutputStreamSink, shape,
                 autoFlush);
-            return new Sink<ByteString, Task<IOResult>>(streamSink);
+            return Sink.FromGraph(streamSink);
         }
 
         /// <summary>

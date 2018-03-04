@@ -456,10 +456,10 @@ namespace Akka.Streams.Implementation
         public override TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Attributes initialAttributes) =>
             Materialize(runnable, null, initialAttributes);
 
-        public override TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<GraphInterpreterShell, IActorRef> subFlowFuser) =>
+        public override TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> subFlowFuser) =>
             Materialize(runnable, subFlowFuser, _defaultInitialAttributes);
 
-        public override TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<GraphInterpreterShell, IActorRef> subFlowFuser, Attributes initialAttributes)
+        public override TMat Materialize<TMat>(IGraph<ClosedShape, TMat> runnable, Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> subFlowFuser, Attributes initialAttributes)
         {
             return Materialize(runnable, subFlowFuser, initialAttributes, 
                 PhasedFusingActorMaterializer.DefaultPhase,
@@ -467,7 +467,7 @@ namespace Akka.Streams.Implementation
         }
 
         public TMat Materialize<TMat>(IGraph<ClosedShape, TMat> graph,
-            Func<GraphInterpreterShell, IActorRef> subFlowFuser, Attributes initialAttributes,
+            Func<ActorGraphInterpreter.GraphInterpreterShell, IActorRef> subFlowFuser, Attributes initialAttributes,
             IPhase<object> defaultPhase, ImmutableDictionary<IslandTag, IPhase<object>> phases)
         {
             var islandTracking = new IslandTracking(phases, Settings, defaultPhase, this);
@@ -537,11 +537,11 @@ namespace Akka.Streams.Implementation
             _settings = settings;
             _materializer = materializer;
 
-            Shell = new GraphInterpreterShell(null, null, _settings, _materializer);
+            Shell = new ActorGraphInterpreter.GraphInterpreterShell(null, null, _settings, _materializer);
         }
 
         // todo remove assembly from graphinterpreter shell
-        public GraphInterpreterShell Shell { get; }
+        public ActorGraphInterpreter.GraphInterpreterShell Shell { get; }
 
         public string Name { get; } = "Fusing GraphStages phase";
 
@@ -638,7 +638,7 @@ namespace Akka.Streams.Implementation
             var connection = Connection(slot);
             // TODO: proper input port debug string (currently prints the stage)
             var boundary =
-                new ActorGraphInterpreter.BatchingActorInputBoundary(16, Shell, publisher,
+                new ActorGraphInterpreter.BatchingActorInputBoundary<object>(16, Shell, publisher,
                     connection.InOwner.ToString());
             _logics.Add(boundary);
             boundary.StageId = _logics.Count - 1;

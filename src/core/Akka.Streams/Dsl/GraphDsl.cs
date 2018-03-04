@@ -7,8 +7,8 @@
 
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Akka.Streams.Implementation;
-using Akka.Streams.Implementation.Fusing;
 
 namespace Akka.Streams.Dsl
 {
@@ -29,9 +29,7 @@ namespace Akka.Streams.Dsl
             /// TBD
             /// </summary>
             internal Builder() { }
-
-            private IModule _moduleInProgress = EmptyModule.Instance;
-
+            
             /// <summary>
             /// TBD
             /// </summary>
@@ -39,10 +37,8 @@ namespace Akka.Streams.Dsl
             /// <typeparam name="T2">TBD</typeparam>
             /// <param name="from">TBD</param>
             /// <param name="to">TBD</param>
-            internal void AddEdge<T1, T2>(Outlet<T1> from, Inlet<T2> to) where T2 : T1
-            {
-                _moduleInProgress = _moduleInProgress.Wire(from, to);
-            }
+            internal void AddEdge<T1, T2>(Outlet<T1> from, Inlet<T2> to) where T2 : T1 =>
+                TraversalBuilder = TraversalBuilder.Wire(from, to);
 
             /// <summary>
             /// INTERNAL API. 
@@ -55,14 +51,12 @@ namespace Akka.Streams.Dsl
             /// <param name="graph">TBD</param>
             /// <param name="transform">TBD</param>
             /// <returns>TBD</returns>
-            internal TShape Add<TShape, TMat, TMat2>(IGraph<TShape, TMat> graph, Func<TMat, TMat2> transform) where TShape : Shape
+            internal TShape Add<TShape, TMat, TMat2>(IGraph<TShape, TMat> graph, Func<TMat, TMat2> transform)
+                where TShape : Shape
             {
-                if (StreamLayout.IsDebug)
-                    StreamLayout.Validate(graph.Module);
-
-                var copy = graph.Module.CarbonCopy();
-                _moduleInProgress = _moduleInProgress.Compose<TMat,TMat2,TMat2>(copy.TransformMaterializedValue(transform), Keep.Right);
-                return (TShape)graph.Shape.CopyFromPorts(copy.Shape.Inlets, copy.Shape.Outlets);
+                var newShape = graph.Shape.DeepCopy();
+                TraversalBuilder = TraversalBuilder.Add<TMat, TMat2, TMat2>(graph.Builder.TransformMataterialized(transform), newShape, Keep.Right);
+                return (TShape)newShape;
             }
 
             /// <summary>
@@ -79,12 +73,9 @@ namespace Akka.Streams.Dsl
             /// <returns>TBD</returns>
             internal TShape Add<TShape, TMat1, TMat2, TMat3>(IGraph<TShape> graph, Func<TMat1, TMat2, TMat3> combine) where TShape : Shape
             {
-                if (StreamLayout.IsDebug)
-                    StreamLayout.Validate(graph.Module);
-
-                var copy = graph.Module.CarbonCopy();
-                _moduleInProgress = _moduleInProgress.Compose(copy, combine);
-                return (TShape)graph.Shape.CopyFromPorts(copy.Shape.Inlets, copy.Shape.Outlets);
+                var newShape = graph.Shape.DeepCopy();
+                TraversalBuilder = TraversalBuilder.Add(graph.Builder, newShape, combine);
+                return (TShape)newShape;
             }
 
             #endregion
@@ -100,12 +91,9 @@ namespace Akka.Streams.Dsl
             public TShape Add<TShape, TMat>(IGraph<TShape, TMat> graph)
                 where TShape : Shape
             {
-                if (StreamLayout.IsDebug)
-                    StreamLayout.Validate(graph.Module);
-
-                var copy = graph.Module.CarbonCopy();
-                _moduleInProgress = _moduleInProgress.Compose<object, TMat, object>(copy, Keep.Left);
-                return (TShape)graph.Shape.CopyFromPorts(copy.Shape.Inlets, copy.Shape.Outlets);
+                var newShape = graph.Shape.DeepCopy();
+                TraversalBuilder = TraversalBuilder.Add<object, TMat, object>(graph.Builder, newShape, Keep.Left);
+                return (TShape)newShape;
             }
 
             /// <summary>
@@ -125,30 +113,22 @@ namespace Akka.Streams.Dsl
             {
                 get
                 {
-                   /*
-                    * This brings the graph into a homogenous shape: if only one `add` has
-                    * been performed so far, the moduleInProgress will be a CopiedModule
-                    * that upon the next `composeNoMat` will be wrapped together with the
-                    * MaterializedValueSource into a CompositeModule, leading to its
-                    * relevant computation being an Atomic() for the CopiedModule. This is
-                    * what we must reference, and we can only get this reference if we
-                    * create that computation up-front: just making one up will not work
-                    * because that computation node would not be part of the tree and
-                    * the source would not be triggered.
-                    */
-                    if (_moduleInProgress is CopiedModule)
-                        _moduleInProgress = CompositeModule.Create((Module) _moduleInProgress, _moduleInProgress.Shape);
+                    var completion = new TaskCompletionSource<T>();
+                    var source = Source.FromTask(completion.Task);
 
-                    var source = new MaterializedValueSource<T>(_moduleInProgress.MaterializedValueComputation);
-                    _moduleInProgress = _moduleInProgress.ComposeNoMaterialized(source.Module);
-                    return source.Outlet;
+                    TraversalBuilder = TraversalBuilder
+                        .TransformMataterialized<T, T>(mat =>
+                        {
+                            completion.TrySetResult(mat);
+                            return mat;
+                        })
+                        .Add<T, object, T>(source.Builder, source.Shape, Keep.Left);
+
+                    return source.Shape.Outlet;
                 }
             }
 
-            /// <summary>
-            /// TBD
-            /// </summary>
-            public IModule Module => _moduleInProgress;
+            internal ITraversalBuilder TraversalBuilder { get; private set; } = Implementation.TraversalBuilder.Empty();
 
             /// <summary>
             /// TBD
@@ -378,7 +358,7 @@ namespace Akka.Streams.Dsl
             while (n < count)
             {
                 var outlet = junction.Out(n);
-                if (builder.Module.Downstreams.ContainsKey(outlet)) n++;
+                if (!builder.TraversalBuilder.IsUnwired(outlet)) n++;
                 else return outlet;
             }
 
@@ -402,7 +382,7 @@ namespace Akka.Streams.Dsl
             while (n < count)
             {
                 var inlet = junction.In(n);
-                if (builder.Module.Upstreams.ContainsKey(inlet)) n++;
+                if (!builder.TraversalBuilder.IsUnwired(inlet)) n++;
                 else return inlet;
             }
 
@@ -518,13 +498,13 @@ namespace Akka.Streams.Dsl
         {
             var b = ops.Builder;
 
-            if (!b.Module.Upstreams.ContainsKey(junction.In))
+            if (!b.TraversalBuilder.IsUnwired(junction.In))
             {
                 b.AddEdge(ops.Out, junction.In);
                 return b;
             }
 
-            throw new ArgumentException("No more inlets free on junction", nameof(junction));
+            throw new ArgumentException($"No more inlets free on {junction}", nameof(junction));
         }
 
         private static Outlet<TOut2> Bind<TIn, TOut1, TOut2, TMat>(GraphDsl.ForwardOps<TOut1, TMat> ops, UniformFanOutShape<TIn, TOut2> junction) where TIn : TOut1
@@ -723,7 +703,7 @@ namespace Akka.Streams.Dsl
             for (var n = 0; n < count; n++)
             {
                 var outlet = junction.Out(n);
-                if (!b.Module.Downstreams.ContainsKey(outlet))
+                if (!b.TraversalBuilder.IsUnwired(outlet))
                 {
                     b.AddEdge(outlet, ops.In);
                     return b;

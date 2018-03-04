@@ -36,7 +36,7 @@ namespace Akka.Streams.Dsl
         /// <param name="startPosition">the start position to read from, defaults to 0</param>
         /// <returns>TBD</returns>
         public static Source<ByteString, Task<IOResult>> FromFile(FileInfo f, int chunkSize = 8192, long startPosition = 0) =>
-            new Source<ByteString, Task<IOResult>>(new FileSource(f, chunkSize, startPosition, DefaultAttributes.FileSource,
+            Source.FromGraph(new FileSource(f, chunkSize, startPosition, DefaultAttributes.FileSource,
                 new SourceShape<ByteString>(new Outlet<ByteString>("FileSource"))));
 
         /// <summary>
@@ -54,7 +54,7 @@ namespace Akka.Streams.Dsl
         /// <param name="startPosition">the start position to write to, defaults to 0</param>
         /// <returns>TBD</returns>
         public static Sink<ByteString, Task<IOResult>> ToFile(FileInfo f, FileMode? fileMode = null, long startPosition = 0) =>
-            new Sink<ByteString, Task<IOResult>>(new FileSink(f, startPosition, fileMode ?? FileMode.Create, DefaultAttributes.FileSink,
+            Sink.FromGraph(new FileSink(f, startPosition, fileMode ?? FileMode.Create, DefaultAttributes.FileSink,
                 new SinkShape<ByteString>(new Inlet<ByteString>("FileSink"))));
     }
 }

@@ -28,24 +28,22 @@ namespace Akka.Streams.Dsl
     /// <typeparam name="TMat">TBD</typeparam>
     public sealed class Sink<TIn, TMat> : IGraph<SinkShape<TIn>, TMat>
     {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="module">TBD</param>
-        public Sink(IModule module)
+        private readonly LinearTraversalBuilder _builder;
+        
+        public Sink(LinearTraversalBuilder builder, SinkShape<TIn> shape)
         {
-            Module = module;
+            _builder = builder;
+            Builder = builder;
+            Shape = shape;
         }
 
         /// <summary>
         /// TBD
         /// </summary>
-        public SinkShape<TIn> Shape => (SinkShape<TIn>)Module.Shape;
+        public SinkShape<TIn> Shape { get; }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module { get; }
+        public ITraversalBuilder Builder { get; }
+
 
         /// <summary>
         /// Transform this <see cref="Sink"/> by applying a function to each *incoming* upstream element before
@@ -79,7 +77,7 @@ namespace Akka.Streams.Dsl
         /// <param name="fn">TBD</param>
         /// <returns>TBD</returns>
         public Sink<TIn, TMat2> MapMaterializedValue<TMat2>(Func<TMat, TMat2> fn)
-            => new Sink<TIn, TMat2>(Module.TransformMaterializedValue(fn));
+            => new Sink<TIn, TMat2>(_builder.TransformMataterialized(fn), Shape);
 
         /// <summary>
         /// Change the attributes of this <see cref="IGraph{TShape}"/> to the given ones
@@ -101,7 +99,7 @@ namespace Akka.Streams.Dsl
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
         public Sink<TIn, TMat> WithAttributes(Attributes attributes)
-            => new Sink<TIn, TMat>(Module.WithAttributes(attributes));
+            => new Sink<TIn, TMat>(_builder.SetAttributes(attributes), Shape);
 
         /// <summary>
         /// Add the given attributes to this <see cref="IGraph{TShape}"/>.
@@ -123,7 +121,7 @@ namespace Akka.Streams.Dsl
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
         public Sink<TIn, TMat> AddAttributes(Attributes attributes)
-            => WithAttributes(Module.Attributes.And(attributes));
+            => WithAttributes(Builder.Attributes.And(attributes));
 
         /// <summary>
         /// Add a name attribute to this Sink.
@@ -146,13 +144,13 @@ namespace Akka.Streams.Dsl
         /// Put an asynchronous boundary around this Sink.
         /// </summary>
         /// <returns>TBD</returns>
-        public Sink<TIn, TMat> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
-
+        public Sink<TIn, TMat> Async() =>
+            new Sink<TIn, TMat>(_builder.MakeIsland(IslandTag.GraphStage), Shape);
         /// <summary>
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public override string ToString() => $"Sink({Shape}, {Module})";
+        public override string ToString() => $"Sink({Shape})";
     }
 
     /// <summary>
@@ -169,26 +167,13 @@ namespace Akka.Streams.Dsl
         public static SinkShape<T> Shape<T>(string name) => new SinkShape<T>(new Inlet<T>(name + ".in"));
 
         /// <summary>
-        /// A graph with the shape of a sink logically is a sink, this method makes
-        /// it so also in type.
-        /// </summary> 
-        /// <typeparam name="TIn">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <param name="graph">TBD</param>
-        /// <returns>TBD</returns>
-        public static Sink<TIn, TMat> Wrap<TIn, TMat>(IGraph<SinkShape<TIn>, TMat> graph)
-            => graph is Sink<TIn, TMat>
-                ? (Sink<TIn, TMat>) graph
-                : new Sink<TIn, TMat>(graph.Module);
-
-        /// <summary>
         /// Helper to create <see cref="Sink{TIn, TMat}"/> from <see cref="ISubscriber{TIn}"/>.
         /// </summary>
         /// <typeparam name="TIn">TBD</typeparam>
         /// <param name="subscriber">TBD</param>
         /// <returns>TBD</returns>
-        public static Sink<TIn, object> Create<TIn>(ISubscriber<TIn> subscriber)
-            => new Sink<TIn, object>(new SubscriberSink<TIn>(subscriber, DefaultAttributes.SubscriberSink, Shape<TIn>("SubscriberSink")));
+        public static Sink<TIn, NotUsed> Create<TIn>(ISubscriber<TIn> subscriber)
+            => FromGraph(new SubscriberSink<TIn>(subscriber, DefaultAttributes.SubscriberSink, Shape<TIn>("SubscriberSink")));
 
         /// <summary>
         /// A <see cref="Sink{TIn,TMat}"/> that materializes into a <see cref="Task{TIn}"/> of the first value received.
@@ -259,7 +244,7 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="TIn">TBD</typeparam>
         /// <returns>TBD</returns>
         public static Sink<TIn, IPublisher<TIn>> Publisher<TIn>()
-            => new Sink<TIn, IPublisher<TIn>>(new PublisherSink<TIn>(DefaultAttributes.PublisherSink, Shape<TIn>("PublisherSink")));
+            => FromGraph(new PublisherSink<TIn>(DefaultAttributes.PublisherSink, Shape<TIn>("PublisherSink")));
 
         /// <summary>
         /// A <see cref="Sink{TIn,TMat}"/> that materializes into <see cref="IPublisher{TIn}"/>
@@ -268,7 +253,7 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="TIn">TBD</typeparam>
         /// <returns>TBD</returns>
         public static Sink<TIn, IPublisher<TIn>> FanoutPublisher<TIn>()
-            => new Sink<TIn, IPublisher<TIn>>(new FanoutPublisherSink<TIn>(DefaultAttributes.FanoutPublisherSink, Shape<TIn>("FanoutPublisherSink")));
+            =>  FromGraph(new FanoutPublisherSink<TIn>(DefaultAttributes.FanoutPublisherSink, Shape<TIn>("FanoutPublisherSink")));
 
         /// <summary>
         /// A <see cref="Sink{TIn,TMat}"/> that will consume the stream and discard the elements.
@@ -443,7 +428,7 @@ namespace Akka.Streams.Dsl
         /// <param name="onCompleteMessage">TBD</param>
         /// <returns>TBD</returns>
         public static Sink<TIn, NotUsed> ActorRef<TIn>(IActorRef actorRef, object onCompleteMessage)
-            => new Sink<TIn, NotUsed>(new ActorRefSink<TIn>(actorRef, onCompleteMessage, DefaultAttributes.ActorRefSink, Shape<TIn>("ActorRefSink")));
+            => FromGraph(new ActorRefSink<TIn>(actorRef, onCompleteMessage, DefaultAttributes.ActorRefSink, Shape<TIn>("ActorRefSink")));
 
         /// <summary>
         /// Sends the elements of the stream to the given <see cref="IActorRef"/> that sends back back-pressure signal.
@@ -484,7 +469,7 @@ namespace Akka.Streams.Dsl
         /// <param name="props">TBD</param>
         /// <returns>TBD</returns>
         public static Sink<TIn, IActorRef> ActorSubscriber<TIn>(Props props)
-            => new Sink<TIn, IActorRef>(new ActorSubscriberSink<TIn>(props, DefaultAttributes.ActorSubscriberSink, Shape<TIn>("ActorSubscriberSink")));
+            => FromGraph(new ActorSubscriberSink<TIn>(props, DefaultAttributes.ActorSubscriberSink, Shape<TIn>("ActorSubscriberSink")));
 
         ///<summary>
         /// <para>
@@ -540,9 +525,10 @@ namespace Akka.Streams.Dsl
         /// <param name="graph">TBD</param>
         /// <returns>TBD</returns>
         public static Sink<TIn, TMat> FromGraph<TIn, TMat>(IGraph<SinkShape<TIn>, TMat> graph)
-            => graph is Sink<TIn, TMat>
-                ? (Sink<TIn, TMat>) graph
-                : new Sink<TIn, TMat>(graph.Module);
+            => graph is Sink<TIn, TMat> s
+                ? s
+                : new Sink<TIn, TMat>(LinearTraversalBuilder.FromBuilder<TMat, TMat, TMat>(graph.Builder, graph.Shape, Keep.Right),
+                    graph.Shape);
 
         /// <summary>
         /// Helper to create <see cref="Sink{TIn,TMat}"/> from <see cref="ISubscriber{TIn}"/>.
@@ -551,7 +537,7 @@ namespace Akka.Streams.Dsl
         /// <param name="subscriber">TBD</param>
         /// <returns>TBD</returns>
         public static Sink<TIn, NotUsed> FromSubscriber<TIn>(ISubscriber<TIn> subscriber)
-            => new Sink<TIn, NotUsed>(new SubscriberSink<TIn>(subscriber, DefaultAttributes.SubscriberSink, Shape<TIn>("SubscriberSink")));
+            => FromGraph(new SubscriberSink<TIn>(subscriber, DefaultAttributes.SubscriberSink, Shape<TIn>("SubscriberSink")));
 
         /// <summary>
         /// A <see cref="Sink{TIn,TMat}"/> that immediately cancels its upstream after materialization.
@@ -559,7 +545,7 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="TIn">TBD</typeparam>
         /// <returns>TBD</returns>
         public static Sink<TIn, NotUsed> Cancelled<TIn>()
-            => new Sink<TIn, NotUsed>(new CancelSink<TIn>(DefaultAttributes.CancelledSink, Shape<TIn>("CancelledSink")));
+            => FromGraph(new CancelSink<TIn>(DefaultAttributes.CancelledSink, Shape<TIn>("CancelledSink")));
 
         /// <summary>
         /// A <see cref="Sink{TIn,TMat}"/> that materializes into a <see cref="IPublisher{TIn}"/>.
@@ -582,7 +568,7 @@ namespace Akka.Streams.Dsl
             else
                 publisherSink = new PublisherSink<TIn>(DefaultAttributes.PublisherSink, Shape<TIn>("PublisherSink"));
 
-            return new Sink<TIn, IPublisher<TIn>>(publisherSink);
+            return FromGraph(publisherSink);
         }
     }
 }

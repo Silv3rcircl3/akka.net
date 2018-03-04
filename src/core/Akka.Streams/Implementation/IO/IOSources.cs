@@ -50,24 +50,11 @@ namespace Akka.Streams.Implementation.IO
 
             Label = $"FileSource({f}, {chunkSize})";
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
+        
         /// <summary>
         /// TBD
         /// </summary>
         protected override string Label { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new FileSource(_f, _chunkSize, _startPosition, attributes, AmendShape(attributes));
 
         /// <summary>
         /// TBD
@@ -98,6 +85,11 @@ namespace Akka.Streams.Implementation.IO
             return new ActorPublisherImpl<ByteString>(actorRef);
 
         }
+
+        public override IGraph<SourceShape<ByteString>, Task<IOResult>> WithAttributes(Attributes attributes)
+        {
+            return new FileSource(_f, _chunkSize, _startPosition, attributes, AmendShape(attributes));
+        }
     }
 
     /// <summary>
@@ -122,19 +114,6 @@ namespace Akka.Streams.Implementation.IO
             _chunkSize = chunkSize;
             Attributes = attributes;
         }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public override Attributes Attributes { get; }
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="attributes">TBD</param>
-        /// <returns>TBD</returns>
-        public override IModule WithAttributes(Attributes attributes)
-            => new InputStreamSource(_createInputStream, _chunkSize, attributes, AmendShape(attributes));
 
         /// <summary>
         /// TBD
@@ -172,6 +151,11 @@ namespace Akka.Streams.Implementation.IO
 
             task = ioResultPromise.Task;
             return pub;
+        }
+
+        public override IGraph<SourceShape<ByteString>, Task<IOResult>> WithAttributes(Attributes attributes)
+        {
+            return new InputStreamSource(_createInputStream, _chunkSize, attributes, AmendShape(attributes));
         }
     }
 }

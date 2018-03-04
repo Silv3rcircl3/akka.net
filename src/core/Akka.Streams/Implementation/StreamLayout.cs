@@ -35,6 +35,12 @@ namespace Akka.Streams.Implementation
     {
     }
 
+    public interface IAtomicModuleWithMaterializedValue<out TShape, out TMat> : IAtomicModule<TShape>,
+        IGraph<TShape, TMat> where TShape : Shape
+    {
+
+    }
+
     /// <summary>
     /// INTERNAL API
     /// 
@@ -686,7 +692,7 @@ namespace Akka.Streams.Implementation
     /// <typeparam name="TOut">TBD</typeparam>
     /// <typeparam name="TMat">TBD</typeparam>
     [InternalApi]
-    public sealed class ProcessorModule<TIn, TOut, TMat> : IAtomicModule<FlowShape<TIn, TOut>>, IProcessorModule
+    public sealed class ProcessorModule<TIn, TOut, TMat> : IAtomicModuleWithMaterializedValue<FlowShape<TIn, TOut>, TMat>, IProcessorModule
     {
         private readonly Func<Tuple<IProcessor<TIn, TOut>, TMat>> _createProcessor;
 
@@ -729,14 +735,12 @@ namespace Akka.Streams.Implementation
 
         public ITraversalBuilder Builder { get; } 
 
-        public IGraph<FlowShape<TIn, TOut>> WithAttributes(Attributes attributes) =>
-            new ProcessorModule<TIn, TOut, TMat>(_createProcessor, attributes);
+        public IGraph<FlowShape<TIn, TOut>, TMat> WithAttributes(Attributes attributes) => new ProcessorModule<TIn, TOut, TMat>(_createProcessor, attributes);
 
-        public IGraph<FlowShape<TIn, TOut>> AddAttributes(Attributes attributes) =>
-            WithAttributes(Builder.Attributes.And(attributes));
+        public IGraph<FlowShape<TIn, TOut>, TMat> AddAttributes(Attributes attributes) => WithAttributes(Builder.Attributes.And(attributes));
 
-        public IGraph<FlowShape<TIn, TOut>> Named(string name) => AddAttributes(Attributes.CreateName(name));
+        public IGraph<FlowShape<TIn, TOut>, TMat> Named(string name) => AddAttributes(Attributes.CreateName(name));
 
-        public IGraph<FlowShape<TIn, TOut>> Async() => AddAttributes(Attributes.CreateAsyncBoundary());
+        public IGraph<FlowShape<TIn, TOut>, TMat> Async() => AddAttributes(Attributes.CreateAsyncBoundary());
     }
 }

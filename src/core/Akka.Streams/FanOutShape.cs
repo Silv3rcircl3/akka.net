@@ -176,23 +176,6 @@ namespace Akka.Streams
         /// <returns>TBD</returns>
         public override Shape DeepCopy()
             => Construct(new InitPorts((Inlet<TIn>) In.CarbonCopy(), _outlets.Select(o => o.CarbonCopy())));
-
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="inlets">TBD</param>
-        /// <param name="outlets">TBD</param>
-        /// <exception cref="ArgumentException">TBD</exception>
-        /// <returns>TBD</returns>
-        public sealed override Shape CopyFromPorts(ImmutableArray<Inlet> inlets, ImmutableArray<Outlet> outlets)
-        {
-            if (inlets.Length != 1) throw new ArgumentException(
-                $"Proposed inlets [{string.Join(", ", inlets)}] do not fit FanOutShape");
-            if (outlets.Length != _outlets.Length) throw new ArgumentException(
-                $"Proposed outlets [{string.Join(", ", outlets)}] do not fit FanOutShape");
-
-            return Construct(new InitPorts((Inlet<TIn>)inlets[0], outlets));
-        }
     }
 
     /// <summary>

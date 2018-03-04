@@ -6,12 +6,9 @@
 //-----------------------------------------------------------------------
 
 using System;
-using System.Collections.Immutable;
-using System.Linq;
 using Akka.Streams.Dsl.Internal;
 using Akka.Streams.Implementation;
 using Akka.Streams.Implementation.Fusing;
-using Akka.Streams.Implementation.Stages;
 using Reactive.Streams;
 
 namespace Akka.Streams.Dsl
@@ -24,26 +21,27 @@ namespace Akka.Streams.Dsl
     /// <typeparam name="TMat">Type of value, flow graph may materialize to.</typeparam>
     public sealed class Flow<TIn, TOut, TMat> : IFlow<TOut, TMat>, IGraph<FlowShape<TIn, TOut>, TMat>
     {
+        private readonly LinearTraversalBuilder _builder;
+
         /// <summary>
         /// TBD
         /// </summary>
-        /// <param name="module">TBD</param>
-        internal Flow(IModule module)
+        internal Flow(LinearTraversalBuilder builder, FlowShape<TIn, TOut> shape)
         {
-            Module = module;
+            _builder = builder;
+            Builder = builder;
+            Shape = shape;
         }
 
         /// <summary>
         /// TBD
         /// </summary>
-        public FlowShape<TIn, TOut> Shape => (FlowShape<TIn, TOut>)Module.Shape;
+        public FlowShape<TIn, TOut> Shape { get; }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module { get; }
+        public ITraversalBuilder Builder { get; }
+        
 
-        private bool IsIdentity => Module == Identity<TIn>.Instance.Module;
+        private bool IsIdentity => Builder == Identity<TIn>.Instance.Builder;
 
         /// <summary>
         /// Transform this <see cref="Flow{TIn,TOut,TMat}"/> by appending the given processing steps.
@@ -89,31 +87,13 @@ namespace Akka.Streams.Dsl
             Func<TMat, TMat2, TMat3> combine)
         {
             if (IsIdentity)
-            {
-                var m = flow.Module;
-                StreamLayout.IMaterializedValueNode materializedValueNode;
+                return new Flow<TIn, TOut2, TMat3>(
+                    LinearTraversalBuilder.FromBuilder(flow.Builder, flow.Shape, combine), flow.Shape.As<TIn, TOut2>());
 
-                if (Keep.IsLeft(combine))
-                {
-                    if (IgnorableMaterializedValueComposites.Apply(m))
-                        materializedValueNode = StreamLayout.Ignore.Instance;
-                    else
-                        materializedValueNode = new StreamLayout.Transform(_ => NotUsed.Instance,
-                            new StreamLayout.Atomic(m));
-                }
-                else
-                    materializedValueNode = new StreamLayout.Combine((o, o1) => combine((TMat)o, (TMat2)o1),
-                        StreamLayout.Ignore.Instance, new StreamLayout.Atomic(m));
-
-                return
-                    new Flow<TIn, TOut2, TMat3>(new CompositeModule(ImmutableArray<IModule>.Empty.Add(m), m.Shape,
-                        m.Downstreams, m.Upstreams, materializedValueNode, m.Attributes));
-            }
-
-            var copy = flow.Module.CarbonCopy();
-            return new Flow<TIn, TOut2, TMat3>(Module
-                .Fuse(copy, Shape.Outlet, copy.Shape.Inlets.First(), combine)
-                .ReplaceShape(new FlowShape<TIn, TOut2>(Shape.Inlet, (Outlet<TOut2>)copy.Shape.Outlets.First())));
+            return new Flow<TIn, TOut2, TMat3>(
+                _builder.Append(flow.Builder, flow.Shape, combine),
+                flow.Shape.As<TIn, TOut2>()
+            );
         }
 
         /// <summary>
@@ -132,9 +112,7 @@ namespace Akka.Streams.Dsl
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
         public Flow<TIn, TOut, TMat> WithAttributes(Attributes attributes)
-            => Module is EmptyModule
-                ? this
-                : new Flow<TIn, TOut, TMat>(Module.WithAttributes(attributes));
+            => new Flow<TIn, TOut, TMat>(_builder.SetAttributes(attributes), Shape);
 
         /// <summary>
         /// Add the given attributes to this <see cref="IGraph{TShape}"/>.
@@ -156,7 +134,7 @@ namespace Akka.Streams.Dsl
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
         public Flow<TIn, TOut, TMat> AddAttributes(Attributes attributes)
-            => WithAttributes(Module.Attributes.And(attributes));
+            => WithAttributes(Builder.Attributes.And(attributes));
 
         /// <summary>
         /// Add a name attribute to this Flow.
@@ -179,7 +157,9 @@ namespace Akka.Streams.Dsl
         /// Put an asynchronous boundary around this Source.
         /// </summary>
         /// <returns>TBD</returns>
-        public Flow<TIn, TOut, TMat> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
+        public Flow<TIn, TOut, TMat> Async() =>
+            new Flow<TIn, TOut, TMat>(_builder.MakeIsland(IslandTag.GraphStage),
+                Shape);
 
         /// <summary>
         /// Transform the materialized value of this Flow, leaving all other properties as they were.
@@ -194,7 +174,7 @@ namespace Akka.Streams.Dsl
         /// <param name="mapFunc">TBD</param>
         /// <returns>TBD</returns>
         public Flow<TIn, TOut, TMat2> MapMaterializedValue<TMat2>(Func<TMat, TMat2> mapFunc)
-            => new Flow<TIn, TOut, TMat2>(Module.TransformMaterializedValue(mapFunc));
+            => new Flow<TIn, TOut, TMat2>(_builder.TransformMataterialized(mapFunc), Shape);
 
         /// <summary>
         /// Connect this <see cref="Flow{TIn,TOut,TMat}"/> to a <see cref="Sink{TIn,TMat}"/>, concatenating the processing steps of both.
@@ -221,14 +201,14 @@ namespace Akka.Streams.Dsl
         {
             if (IsIdentity)
             {
-                return Sink.FromGraph(sink as IGraph<SinkShape<TIn>, TMat2>)
-                    .MapMaterializedValue(mat2 => combine(default(TMat), mat2));
+                return new Sink<TIn, TMat3>(
+                    LinearTraversalBuilder.FromBuilder(sink.Builder, sink.Shape, combine),
+                    new SinkShape<TIn>(sink.Shape.Inlet.As<TIn>()));
             }
 
-            var copy = sink.Module.CarbonCopy();
-            return new Sink<TIn, TMat3>(Module
-                .Fuse(copy, Shape.Outlet, copy.Shape.Inlets.First(), combine)
-                .ReplaceShape(new SinkShape<TIn>(Shape.Inlet)));
+           return new Sink<TIn, TMat3>(
+               _builder.Append(sink.Builder, sink.Shape, combine),
+               new SinkShape<TIn>(Shape.Inlet));
         }
 
         /// <summary>
@@ -265,7 +245,7 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="TMat2">TBD</typeparam>
         /// <param name="flow">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat> Join<TMat2>(IGraph<FlowShape<TOut, TIn>, TMat2> flow)
+        public RunnableGraph<TMat> Join<TMat2>(IGraph<FlowShape<TOut, TIn>, TMat2> flow)
             => JoinMaterialized(flow, Keep.Left);
 
         /// <summary>
@@ -291,14 +271,21 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public Flow<TIn2, TOut2, TMatRes> JoinMaterialized<TIn2, TOut2, TMat2, TMatRes>(IGraph<BidiShape<TOut, TOut2, TIn2, TIn>, TMat2> bidi, Func<TMat, TMat2, TMatRes> combine)
         {
-            var copy = bidi.Module.CarbonCopy();
-            var ins = copy.Shape.Inlets.ToArray();
-            var outs = copy.Shape.Outlets.ToArray();
+            var newBidShape = bidi.Shape.DeepCopy();
+            var newFlowShape = Shape.DeepCopy();
 
-            return new Flow<TIn2, TOut2, TMatRes>(Module.Compose(copy, combine)
-                .Wire(Shape.Outlet, ins[0])
-                .Wire(outs[1], Shape.Inlet)
-                .ReplaceShape(new FlowShape<TIn2, TOut2>(Inlet.Create<TIn2>(ins[1]), Outlet.Create<TOut2>(outs[0]))));
+            var resultBuilder =
+                TraversalBuilder.Empty()
+                    .Add(Builder, newFlowShape)
+                    .Add(bidi.Builder, newBidShape, combine)
+                    .Wire(newFlowShape.Outlets[0], newBidShape.Inlets[0])
+                    .Wire(newBidShape.Outlets[1], newFlowShape.Inlets[0]);
+
+            var newShape = new FlowShape<TIn2, TOut2>((Inlet<TIn2>)newBidShape.Inlets[1], (Outlet<TOut2>)newBidShape.Outlets[0]);
+
+            return new Flow<TIn2, TOut2, TMatRes>(
+                LinearTraversalBuilder.FromBuilder<TMat, TMatRes, TMatRes>(resultBuilder, newShape, Keep.Right),
+                newShape);
         }
 
         /// <summary>
@@ -311,13 +298,12 @@ namespace Akka.Streams.Dsl
         /// <param name="flow">TBD</param>
         /// <param name="combine">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat3> JoinMaterialized<TMat2, TMat3>(IGraph<FlowShape<TOut, TIn>, TMat2> flow, Func<TMat, TMat2, TMat3> combine)
+        public RunnableGraph<TMat3> JoinMaterialized<TMat2, TMat3>(IGraph<FlowShape<TOut, TIn>, TMat2> flow, Func<TMat, TMat2, TMat3> combine)
         {
-            var copy = flow.Module.CarbonCopy();
-            return new RunnableGraph<TMat3>(Module
-                .Compose(copy, combine)
-                .Wire(Shape.Outlet, copy.Shape.Inlets.First())
-                .Wire(copy.Shape.Outlets.First(), Shape.Inlet));
+            var resultBuilder = _builder.Append(flow.Builder, flow.Shape, combine)
+                .Wire(flow.Shape.Outlet, flow.Shape.Inlet);
+
+            return new RunnableGraph<TMat3>(resultBuilder);
         }
 
         /// <summary>
@@ -340,7 +326,7 @@ namespace Akka.Streams.Dsl
         /// instance, i.e. the returned <see cref="IRunnableGraph{TMat}"/> is reusable.
         /// </summary>
         /// <returns>A <see cref="IRunnableGraph{TMat}"/> that materializes to a <see cref="IProcessor{T1,T2}"/> when Run() is called on it.</returns>
-        public IRunnableGraph<IProcessor<TIn, TOut>> ToProcessor()
+        public RunnableGraph<IProcessor<TIn, TOut>> ToProcessor()
             => Source.AsSubscriber<TIn>()
                 .Via(this)
                 .ToMaterialized(Sink.AsPublisher<TOut>(false), Keep.Both)
@@ -350,7 +336,7 @@ namespace Akka.Streams.Dsl
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public override string ToString() => $"Flow({Shape}, {Module})";
+        public override string ToString() => $"Flow({Shape})";
     }
 
     /// <summary>
@@ -358,12 +344,21 @@ namespace Akka.Streams.Dsl
     /// </summary>
     public static class Flow
     {
+        private static class TypedFlow<T>
+        {
+            public static readonly LinearTraversalBuilder IdentityTraversalBuilder =
+                LinearTraversalBuilder.FromBuilder<object, object, object>(GraphStages.Identity<T>().Builder,
+                    GraphStages.Identity<T>().Shape, Keep.Right);
+        }
+
+        internal static LinearTraversalBuilder IdentityTraversalBuilder<T>() => TypedFlow<T>.IdentityTraversalBuilder;
+
         /// <summary>
         /// TBD
         /// </summary>
         /// <typeparam name="T">TBD</typeparam>
         /// <returns>TBD</returns>
-        public static Flow<T, T, NotUsed> Identity<T>() => new Flow<T, T, NotUsed>(GraphStages.Identity<T>().Module);
+        public static Flow<T, T, NotUsed> Identity<T>() => Identity<T, NotUsed>();
 
         /// <summary>
         /// TBD
@@ -371,7 +366,14 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="T">TBD</typeparam>
         /// <typeparam name="TMat">TBD</typeparam>
         /// <returns>TBD</returns>
-        public static Flow<T, T, TMat> Identity<T, TMat>() => new Flow<T, T, TMat>(GraphStages.Identity<T>().Module);
+        public static Flow<T, T, TMat> Identity<T, TMat>()
+        {
+            var stage = GraphStages.Identity<T>();
+            return new Flow<T, T, TMat>(
+                TypedFlow<T>.IdentityTraversalBuilder,
+                stage.Shape
+            );
+        }
 
         /// <summary>
         /// Creates flow from the Reactive Streams <see cref="IProcessor{T1,T2}"/>.
@@ -392,7 +394,7 @@ namespace Akka.Streams.Dsl
         /// <param name="factory">TBD</param>
         /// <returns>TBD</returns>
         public static Flow<TIn, TOut, TMat> FromProcessorMaterialized<TIn, TOut, TMat>(Func<Tuple<IProcessor<TIn, TOut>, TMat>> factory) 
-            => new Flow<TIn, TOut, TMat>(new ProcessorModule<TIn, TOut, TMat>(factory));
+            => FromGraph(new ProcessorModule<TIn, TOut, TMat>(factory));
 
         /// <summary>
         /// Helper to create a <see cref="Flow{TIn,TOut,TMat}"/> without a <see cref="Source"/> or <see cref="Sink"/>.
@@ -429,7 +431,9 @@ namespace Akka.Streams.Dsl
         /// <param name="graph">TBD</param>
         /// <returns>TBD</returns>
         public static Flow<TIn, TOut, TMat> FromGraph<TIn, TOut, TMat>(IGraph<FlowShape<TIn, TOut>, TMat> graph)
-            => graph as Flow<TIn, TOut, TMat> ?? new Flow<TIn, TOut, TMat>(graph.Module);
+            => graph as Flow<TIn, TOut, TMat> ??
+               new Flow<TIn, TOut, TMat>(LinearTraversalBuilder.FromBuilder<TMat, TMat, TMat>(graph.Builder, graph.Shape, Keep.Right),
+                   graph.Shape);
 
         /// <summary>
         /// Creates a <see cref="Flow{TIn,TOut,TMat}"/> from a <see cref="Sink{TIn,TMat}"/> and a <see cref="Source{TOut,TMat}"/> where the flow's input

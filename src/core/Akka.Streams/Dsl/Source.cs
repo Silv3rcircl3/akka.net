@@ -9,7 +9,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
 using Akka.Actor;
 using Akka.Streams.Dsl.Internal;
@@ -32,24 +31,21 @@ namespace Akka.Streams.Dsl
     /// <typeparam name="TMat">TBD</typeparam>
     public sealed class Source<TOut, TMat> : IFlow<TOut, TMat>, IGraph<SourceShape<TOut>, TMat>
     {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="module">TBD</param>
-        public Source(IModule module)
+        private LinearTraversalBuilder _builder;
+
+        public Source(LinearTraversalBuilder builder, SourceShape<TOut> shape)
         {
-            Module = module;
+            _builder = builder;
+            Builder = builder;
+            Shape = shape;
         }
 
         /// <summary>
         /// TBD
         /// </summary>
-        public SourceShape<TOut> Shape => (SourceShape<TOut>)Module.Shape;
+        public SourceShape<TOut> Shape { get; }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module { get; }
+        public ITraversalBuilder Builder { get; }
 
         /// <summary>
         /// Connect this <see cref="Source{TOut,TMat}"/> to a <see cref="Sink{TIn,TMat}"/>,
@@ -58,7 +54,7 @@ namespace Akka.Streams.Dsl
         /// <typeparam name="TMat2">TBD</typeparam>
         /// <param name="sink">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat> To<TMat2>(IGraph<SinkShape<TOut>, TMat2> sink) => ToMaterialized(sink, Keep.Left);
+        public RunnableGraph<TMat> To<TMat2>(IGraph<SinkShape<TOut>, TMat2> sink) => ToMaterialized(sink, Keep.Left);
 
         /// <summary>
         /// Connect this <see cref="Source{TOut,TMat}"/> to a <see cref="Sink{TIn,TMat}"/>,
@@ -69,11 +65,8 @@ namespace Akka.Streams.Dsl
         /// <param name="sink">TBD</param>
         /// <param name="combine">TBD</param>
         /// <returns>TBD</returns>
-        public IRunnableGraph<TMat3> ToMaterialized<TMat2, TMat3>(IGraph<SinkShape<TOut>, TMat2> sink, Func<TMat, TMat2, TMat3> combine)
-        {
-            var sinkCopy = sink.Module.CarbonCopy();
-            return new RunnableGraph<TMat3>(Module.Fuse(sinkCopy, Shape.Outlet, sinkCopy.Shape.Inlets.First(), combine));
-        }
+        public RunnableGraph<TMat3> ToMaterialized<TMat2, TMat3>(IGraph<SinkShape<TOut>, TMat2> sink, Func<TMat, TMat2, TMat3> combine) =>
+            new RunnableGraph<TMat3>(_builder.Append(sink.Builder, sink.Shape, combine));
 
         /// <summary>
         /// Concatenate the given <see cref="Source{TOut,TMat}"/> to this <see cref="Flow{TIn,TOut,TMat}"/>, meaning that once this
@@ -113,7 +106,7 @@ namespace Akka.Streams.Dsl
         /// <param name="attributes">The attributes to add</param>
         /// <returns>A new Source with the added attributes</returns>
         public Source<TOut, TMat> WithAttributes(Attributes attributes)
-            => new Source<TOut, TMat>(Module.WithAttributes(attributes));
+            => new Source<TOut, TMat>(_builder.SetAttributes(attributes), Shape);
 
         /// <summary>
         /// Add the given attributes to this <see cref="IGraph{TShape}"/>.
@@ -135,7 +128,7 @@ namespace Akka.Streams.Dsl
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
         public Source<TOut, TMat> AddAttributes(Attributes attributes)
-            => WithAttributes(Module.Attributes.And(attributes));
+            => WithAttributes(Builder.Attributes.And(attributes));
 
         /// <summary>
         /// Add a name attribute to this Source.
@@ -158,7 +151,11 @@ namespace Akka.Streams.Dsl
         /// Put an asynchronous boundary around this Source.
         /// </summary>
         /// <returns>TBD</returns>
-        public Source<TOut, TMat> Async() => AddAttributes(new Attributes(Attributes.AsyncBoundary.Instance));
+        public Source<TOut, TMat> Async() =>
+            new Source<TOut, TMat>(
+                _builder.MakeIsland(IslandTag.GraphStage),
+                Shape);
+
 
         /// <summary>
         /// Transform this <see cref="IFlow{T,TMat}"/> by appending the given processing steps.
@@ -179,23 +176,18 @@ namespace Akka.Streams.Dsl
         /// <param name="flow">TBD</param>
         /// <param name="combine">TBD</param>
         /// <returns>TBD</returns>
-        public Source<TOut2, TMat3> ViaMaterialized<TOut2, TMat2, TMat3>(IGraph<FlowShape<TOut, TOut2>, TMat2> flow, Func<TMat, TMat2, TMat3> combine)
+        public Source<TOut2, TMat3> ViaMaterialized<TOut2, TMat2, TMat3>(IGraph<FlowShape<TOut, TOut2>, TMat2> flow,
+            Func<TMat, TMat2, TMat3> combine)
         {
-            if (flow.Module == GraphStages.Identity<TOut2>().Module)
-            {
-                if (Keep.IsLeft(combine))
-                    return this as Source<TOut2, TMat3>;
-
-                if (Keep.IsRight(combine))
-                    return MapMaterializedValue(_ => NotUsed.Instance) as Source<TOut2, TMat3>;
-
-                return MapMaterializedValue(value => combine(value, (TMat2)(object)NotUsed.Instance)) as Source<TOut2, TMat3>;
-            }
-
-            var flowCopy = flow.Module.CarbonCopy();
-            return new Source<TOut2, TMat3>(Module
-                .Fuse(flowCopy, Shape.Outlet, flowCopy.Shape.Inlets.First(), combine)
-                .ReplaceShape(new SourceShape<TOut2>((Outlet<TOut2>)flowCopy.Shape.Outlets.First())));
+            // todo ????? builder can't be a source...
+            //if (flow.Builder == Flow.IdentityTraversalBuilder<TOut>())
+            //{
+            //    return _builder.Append(LinearTraversalBuilder.Empty(), combine) as Source<TOut2, TMat3>;
+            //}
+            
+            return new Source<TOut2, TMat3>(
+                _builder.Append(flow.Builder, flow.Shape, combine),
+                new SourceShape<TOut2>(flow.Shape.Outlet));
         }
 
         /// <summary>
@@ -232,7 +224,7 @@ namespace Akka.Streams.Dsl
         /// <param name="mapFunc">TBD</param>
         /// <returns>TBD</returns>
         public Source<TOut, TMat2> MapMaterializedValue<TMat2>(Func<TMat, TMat2> mapFunc)
-            => new Source<TOut, TMat2>(Module.TransformMaterializedValue(mapFunc));
+            => new Source<TOut, TMat2>(_builder.TransformMataterialized(mapFunc), Shape);
 
         /// <summary>
         /// Connect this <see cref="Source{TOut,TMat}"/> to a <see cref="Sink{TIn,TMat}"/> and run it. The returned value is the materialized value
@@ -363,7 +355,7 @@ namespace Akka.Streams.Dsl
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public override string ToString() => $"Source({Shape}, {Module})";
+        public override string ToString() => $"Source({Shape})";
     }
 
     /// <summary>
@@ -391,7 +383,7 @@ namespace Akka.Streams.Dsl
         /// <param name="publisher">TBD</param>
         /// <returns>TBD</returns>
         public static Source<T, NotUsed> FromPublisher<T>(IPublisher<T> publisher)
-            => new Source<T, NotUsed>(new PublisherSource<T>(publisher, DefaultAttributes.PublisherSource, Shape<T>("PublisherSource")));
+            => FromGraph(new PublisherSource<T>(publisher, DefaultAttributes.PublisherSource, Shape<T>("PublisherSource")));
 
         /// <summary>
         /// Helper to create <see cref="Source{TOut,TMat}"/> from <see cref="IEnumerator{T}"/>.
@@ -457,7 +449,9 @@ namespace Akka.Streams.Dsl
         /// <param name="source">TBD</param>
         /// <returns>TBD</returns>
         public static Source<T, TMat> FromGraph<T, TMat>(IGraph<SourceShape<T>, TMat> source)
-            => source as Source<T, TMat> ?? new Source<T, TMat>(source.Module);
+            => source as Source<T, TMat> ??
+               new Source<T, TMat>(LinearTraversalBuilder.FromBuilder<object, TMat, TMat>(source.Builder, source.Shape, Keep.Right),
+                   source.Shape);
 
         /// <summary>
         /// Start a new <see cref="Source{TOut,TMat}"/> from the given <see cref="Task{T}"/>. The stream will consist of
@@ -569,7 +563,8 @@ namespace Akka.Streams.Dsl
         /// </summary> 
         /// <typeparam name="T">TBD</typeparam>
         /// <returns>TBD</returns>
-        public static Source<T, NotUsed> Empty<T>() => FromGraph(new EmptySource<T>());
+        public static Source<T, NotUsed> Empty<T>() => FromGraph(new PublisherSource<T>(EmptyPublisher<T>.Instance,
+            DefaultAttributes.EmptySource, Shape<T>("EmptySource")));
 
         /// <summary>
         /// Create a <see cref="Source{TOut,TMat}"/> which materializes a <see cref="TaskCompletionSource{TResult}"/> which controls what element
@@ -586,7 +581,7 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public static Source<T, TaskCompletionSource<T>> Maybe<T>()
         {
-            return new Source<T, TaskCompletionSource<T>>(
+            return FromGraph(
                 new MaybeSource<T>(DefaultAttributes.MaybeSource,
                     new SourceShape<T>(new Outlet<T>("MaybeSource"))));
         }
@@ -599,7 +594,7 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public static Source<T, NotUsed> Failed<T>(Exception cause)
         {
-            return new Source<T, NotUsed>(new PublisherSource<T>(
+            return FromGraph(new PublisherSource<T>(
                 new ErrorPublisher<T>(cause, "FailedSource"),
                 DefaultAttributes.FailedSource,
                 Shape<T>("FailedSource")));
@@ -620,7 +615,7 @@ namespace Akka.Streams.Dsl
         /// <returns>TBD</returns>
         public static Source<T, ISubscriber<T>> AsSubscriber<T>()
         {
-            return new Source<T, ISubscriber<T>>(
+            return FromGraph(
                 new SubscriberSource<T>(DefaultAttributes.SubscriberSource,
                     Shape<T>("SubscriberSource")));
         }
@@ -641,7 +636,7 @@ namespace Akka.Streams.Dsl
             if (!typeof(Actors.ActorPublisher<T>).IsAssignableFrom(props.Type))
                 throw new ArgumentException("Actor must be ActorPublisher");
 
-            return new Source<T, IActorRef>(new ActorPublisherSource<T>(props, DefaultAttributes.ActorPublisherSource, Shape<T>("ActorPublisherSource")));
+            return FromGraph(new ActorPublisherSource<T>(props, DefaultAttributes.ActorPublisherSource, Shape<T>("ActorPublisherSource")));
         }
 
         /// <summary>
@@ -687,7 +682,7 @@ namespace Akka.Streams.Dsl
             if (bufferSize < 0) throw new ArgumentException("Buffer size must be greater than or equal 0", nameof(bufferSize));
             if (overflowStrategy == OverflowStrategy.Backpressure) throw new NotSupportedException("Backpressure overflow strategy is not supported");
 
-            return new Source<T, IActorRef>(new ActorRefSource<T>(bufferSize, overflowStrategy, DefaultAttributes.ActorRefSource, Shape<T>("ActorRefSource")));
+            return FromGraph(new ActorRefSource<T>(bufferSize, overflowStrategy, DefaultAttributes.ActorRefSource, Shape<T>("ActorRefSource")));
         }
 
 

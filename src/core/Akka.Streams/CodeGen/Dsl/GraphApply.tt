@@ -32,9 +32,8 @@ namespace Akka.Streams.Dsl
         {
             var builder = new Builder<NotUsed>();
             var shape = buildBlock(builder);
-            var module = builder.Module.ReplaceShape(shape);
 
-            return new GraphImpl<TShape, NotUsed>(shape, module);
+            return new GraphImpl<TShape, NotUsed>(shape, builder.TraversalBuilder);
         }
         
         /// <summary>
@@ -54,9 +53,8 @@ namespace Akka.Streams.Dsl
             var builder = new Builder<TMat>();
             var shape1 = builder.Add<TShape1, object, TMat, TMat>(g1, Keep.Right);
             var shape = buildBlock(builder, shape1);
-            var module = builder.Module.ReplaceShape(shape);
 
-            return new GraphImpl<TShapeOut, TMat>(shape, module);
+            return new GraphImpl<TShapeOut, TMat>(shape, builder.TraversalBuilder);
         }
         
 <# for (int i = 2; i < count; i++) { 
@@ -99,9 +97,8 @@ namespace Akka.Streams.Dsl
 <# } #>
 
             var shape = buildBlock(builder, <#= string.Join(", ", Enumerable.Range(0, i).Select(x => "shape"+x)) #>);
-            var module = builder.Module.ReplaceShape(shape);
-
-            return new GraphImpl<TShapeOut, TMatOut>(shape, module);
+            
+            return new GraphImpl<TShapeOut, TMatOut>(shape, builder.TraversalBuilder);
         }
 <# } #>
     }

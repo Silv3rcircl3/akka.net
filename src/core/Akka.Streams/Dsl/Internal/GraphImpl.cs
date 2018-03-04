@@ -7,7 +7,6 @@
 
 using Akka.Annotations;
 using Akka.Streams.Implementation;
-using Akka.Streams.Util;
 
 namespace Akka.Streams.Dsl.Internal
 {
@@ -19,15 +18,10 @@ namespace Akka.Streams.Dsl.Internal
     [InternalApi]
     public class GraphImpl<TShape, TMat> : IGraph<TShape, TMat> where TShape : Shape
     {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <param name="shape">TBD</param>
-        /// <param name="module">TBD</param>
-        public GraphImpl(TShape shape, IModule module)
+        public GraphImpl(TShape shape, ITraversalBuilder builder)
         {
             Shape = shape;
-            Module = module;
+            Builder = builder;
         }
 
         /// <summary>
@@ -35,24 +29,21 @@ namespace Akka.Streams.Dsl.Internal
         /// </summary>
         public TShape Shape { get; }
 
-        /// <summary>
-        /// TBD
-        /// </summary>
-        public IModule Module { get; }
+        public ITraversalBuilder Builder { get; }
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
-        public IGraph<TShape, TMat> WithAttributes(Attributes attributes) => new GraphImpl<TShape, TMat>(Shape, Module.WithAttributes(attributes));
+        public IGraph<TShape, TMat> WithAttributes(Attributes attributes) => new GraphImpl<TShape, TMat>(Shape, Builder.SetAttributes(attributes));
 
         /// <summary>
         /// TBD
         /// </summary>
         /// <param name="attributes">TBD</param>
         /// <returns>TBD</returns>
-        public IGraph<TShape, TMat> AddAttributes(Attributes attributes) => WithAttributes(Module.Attributes.And(attributes));
+        public IGraph<TShape, TMat> AddAttributes(Attributes attributes) => WithAttributes(Builder.Attributes.And(attributes));
 
         /// <summary>
         /// TBD
@@ -71,26 +62,6 @@ namespace Akka.Streams.Dsl.Internal
         /// TBD
         /// </summary>
         /// <returns>TBD</returns>
-        public override string ToString() => $"Graph({Shape}, {Module})";
-    }
-
-    /// <summary>
-    /// INTERNAL API
-    /// </summary>
-    [InternalApi]
-    public static class ModuleExtractor
-    {
-        /// <summary>
-        /// TBD
-        /// </summary>
-        /// <typeparam name="TShape">TBD</typeparam>
-        /// <typeparam name="TMat">TBD</typeparam>
-        /// <param name="graph">TBD</param>
-        /// <returns>TBD</returns>
-        public static Option<IModule> Unapply<TShape, TMat>(IGraph<TShape, TMat> graph) where TShape : Shape
-        {
-            var module = graph as IModule;
-            return module != null ? new Option<IModule>(module) : Option<IModule>.None;
-        }
+        public override string ToString() => $"Graph({Shape})";
     }
 }

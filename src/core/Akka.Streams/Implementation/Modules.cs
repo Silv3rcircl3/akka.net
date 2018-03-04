@@ -5,7 +5,6 @@
 // </copyright>
 //-----------------------------------------------------------------------
 
-using System;
 using System.Threading.Tasks;
 using Akka.Actor;
 using Akka.Annotations;
@@ -38,7 +37,7 @@ namespace Akka.Streams.Implementation
     /// <typeparam name="TOut">TBD</typeparam>
     /// <typeparam name="TMat">TBD</typeparam>
     [InternalApi]
-    public abstract class SourceModule<TOut, TMat> : IAtomicModule<SourceShape<TOut>>, ISourceModule
+    public abstract class SourceModule<TOut, TMat> : IAtomicModuleWithMaterializedValue<SourceShape<TOut>, TMat>, ISourceModule
     {
         /// <summary>
         /// TBD
@@ -108,7 +107,18 @@ namespace Akka.Streams.Implementation
 
         public Attributes Attributes { get; protected set; }
 
-        public ITraversalBuilder Builder { get; } 
+        public ITraversalBuilder Builder { get; }
+
+        public abstract IGraph<SourceShape<TOut>, TMat> WithAttributes(Attributes attributes);
+
+        public IGraph<SourceShape<TOut>, TMat> AddAttributes(Attributes attributes) =>
+            WithAttributes(Builder.Attributes.And(attributes));
+
+        public IGraph<SourceShape<TOut>, TMat> Named(string name) =>
+            AddAttributes(Attributes.CreateName(name));
+
+        public IGraph<SourceShape<TOut>, TMat> Async() =>
+            AddAttributes(Attributes.CreateAsyncBoundary());
     }
 
     /// <summary>
@@ -148,6 +158,11 @@ namespace Akka.Streams.Implementation
             var processor = new VirtualProcessor<TOut>();
             materializer = processor;
             return processor;
+        }
+
+        public override IGraph<SourceShape<TOut>, ISubscriber<TOut>> WithAttributes(Attributes attributes)
+        {
+            return new SubscriberSource<TOut>(attributes, AmendShape(attributes));
         }
     }
 
@@ -201,6 +216,11 @@ namespace Akka.Streams.Implementation
             materializer = NotUsed.Instance;
             return _publisher;
         }
+
+        public override IGraph<SourceShape<TOut>, NotUsed> WithAttributes(Attributes attributes)
+        {
+            return new PublisherSource<TOut>(_publisher, attributes, AmendShape(attributes));
+        }
     }
 
     /// <summary>
@@ -238,6 +258,11 @@ namespace Akka.Streams.Implementation
         {
             materializer = new TaskCompletionSource<TOut>();
             return new MaybePublisher<TOut>(materializer, Attributes.GetNameOrDefault("MaybeSource"));
+        }
+
+        public override IGraph<SourceShape<TOut>, TaskCompletionSource<TOut>> WithAttributes(Attributes attributes)
+        {
+            return new MaybeSource<TOut>(attributes, AmendShape(attributes));
         }
     }
 
@@ -282,6 +307,11 @@ namespace Akka.Streams.Implementation
             var publisherRef = ActorMaterializerHelper.Downcast(context.Materializer).ActorOf(context, _props);
             materializer = publisherRef;
             return new ActorPublisherImpl<TOut>(publisherRef);
+        }
+
+        public override IGraph<SourceShape<TOut>, IActorRef> WithAttributes(Attributes attributes)
+        {
+            return new ActorPublisherSource<TOut>(_props, attributes, AmendShape(attributes));
         }
     }
 
@@ -335,6 +365,11 @@ namespace Akka.Streams.Implementation
             var mat = ActorMaterializerHelper.Downcast(context.Materializer);
             materializer = mat.ActorOf(context, ActorRefSourceActor<TOut>.Props(_bufferSize, _overflowStrategy, mat.Settings));
             return new ActorPublisherImpl<TOut>(materializer);
+        }
+
+        public override IGraph<SourceShape<TOut>, IActorRef> WithAttributes(Attributes attributes)
+        {
+            return new ActorRefSource<TOut>(_bufferSize, _overflowStrategy, attributes, AmendShape(attributes));
         }
     }
 }

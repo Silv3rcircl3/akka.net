@@ -920,36 +920,6 @@ namespace Akka.Streams.Implementation
 
     /// <summary>
     /// INTERNAL API
-    /// </summary>
-    public sealed class EmptySource<TOut> : GraphStage<SourceShape<TOut>>
-    {
-        private sealed class Logic : OutGraphStageLogic
-        {
-            public Logic(EmptySource<TOut> stage) : base(stage.Shape) => SetHandler(stage.Out, this);
-
-            public override void OnPull() => CompleteStage();
-
-            public override void PreStart() => CompleteStage();
-        }
-
-        public EmptySource()
-        {
-            Shape = new SourceShape<TOut>(Out);
-        }
-
-        public Outlet<TOut> Out { get; } = new Outlet<TOut>("EmptySource.out");
-
-        public override SourceShape<TOut> Shape { get; }
-
-        protected override Attributes InitialAttributes => DefaultAttributes.LazySource;
-
-        protected override GraphStageLogic CreateLogic(Attributes inheritedAttributes) => new Logic(this);
-
-        public override string ToString() => "EmptySource";
-    }
-
-    /// <summary>
-    /// INTERNAL API
     /// 
     /// A graph stage that can be used to integrate Akka.Streams with .NET events.
     /// </summary>

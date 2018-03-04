@@ -446,6 +446,8 @@ namespace Akka.Streams
         /// <returns>TBD</returns>
         public override Shape DeepCopy()
             => new FlowShape<TIn, TOut>((Inlet<TIn>) Inlet.CarbonCopy(), (Outlet<TOut>) Outlet.CarbonCopy());
+
+        internal FlowShape<TIn1, TOut1> As<TIn1, TOut1>() => new FlowShape<TIn1, TOut1>(Inlet.As<TIn1>(), Outlet.As<TOut1>());
     }
 
     /// <summary>
